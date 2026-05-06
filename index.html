@@ -1,0 +1,2800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emotion Spectrum — AI Music Visualizer V2</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;400;600;800&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.js"></script>
+<!-- Meyda Acoustic Feature Extraction Engine -->
+<script src="https://cdn.jsdelivr.net/npm/meyda@5.6.3/dist/web/meyda.min.js" onerror="loadMeydaFallback()"></script>
+<script>
+/* Meyda CDN fallback strategy (jsDelivr → cdnjs → unpkg) */
+var _meydaFallbackIdx=0;
+var _meydaSources=[
+  'https://cdnjs.cloudflare.com/ajax/libs/meyda/5.6.3/meyda.min.js',
+  'https://unpkg.com/meyda@5.6.3/dist/web/meyda.min.js'
+];
+function loadMeydaFallback(){
+  if(_meydaFallbackIdx>=_meydaSources.length){
+    console.warn('[Meyda] All CDN sources failed, AI features disabled');
+    return;
+  }
+  var s=document.createElement('script');
+  s.src=_meydaSources[_meydaFallbackIdx++];
+  s.onerror=loadMeydaFallback;
+  document.head.appendChild(s);
+}
+</script>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --fg: #e8e6f0;
+    --muted: #6b6880;
+    --accent: #ff6b35;
+    --card: rgba(18, 18, 28, 0.85);
+    --border: rgba(255,255,255,0.08);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+  #visualizer {
+    position: fixed;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    z-index: 0;
+  }
+
+  /* Upload Screen */
+  #upload-screen {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    transition: opacity 0.6s ease, visibility 0.6s ease;
+  }
+  #upload-screen.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  .drop-zone {
+    width: 480px; max-width: 90vw;
+    padding: 60px 40px;
+    border: 2px dashed rgba(255,255,255,0.15);
+    border-radius: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    background: rgba(255,255,255,0.02);
+    position: relative;
+    overflow: hidden;
+  }
+  .drop-zone::before {
+    content: '';
+    position: absolute; inset: -2px;
+    border-radius: 24px;
+    background: conic-gradient(from 0deg, transparent, var(--accent), transparent, var(--accent), transparent);
+    opacity: 0;
+    transition: opacity 0.4s;
+    z-index: -1;
+    animation: spin 4s linear infinite;
+  }
+  .drop-zone:hover::before, .drop-zone.drag-over::before { opacity: 0.4; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(255,107,53,0.05);
+    transform: scale(1.02);
+  }
+  .drop-icon {
+    font-size: 56px;
+    color: var(--muted);
+    margin-bottom: 20px;
+    transition: color 0.3s, transform 0.3s;
+  }
+  .drop-zone:hover .drop-icon { color: var(--accent); transform: translateY(-4px); }
+
+  /* Mood Panel */
+  #mood-panel {
+    position: fixed;
+    top: 24px; left: 24px;
+    z-index: 30;
+    opacity: 0;
+    transform: translateX(-20px);
+    transition: all 0.6s ease;
+    pointer-events: none;
+  }
+  #mood-panel.visible { opacity: 1; transform: translateX(0); pointer-events: auto; }
+  .mood-label {
+    font-size: 28px; font-weight: 800;
+    letter-spacing: -0.5px;
+    transition: color 0.5s;
+  }
+  .mood-confidence {
+    font-size: 13px;
+    color: var(--muted);
+    margin-top: 2px;
+    font-weight: 200;
+  }
+  .mood-bars {
+    margin-top: 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .mood-bar-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--muted);
+    font-weight: 400;
+  }
+  .mood-bar-track {
+    width: 100px; height: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .mood-bar-fill {
+    height: 100%; border-radius: 2px;
+    transition: width 0.3s ease, background 0.5s ease;
+    width: 0%;
+  }
+
+  /* Controls */
+  #controls {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    z-index: 30;
+    padding: 16px 24px 20px;
+    background: linear-gradient(to top, rgba(10,10,15,0.95), transparent);
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.6s ease 0.2s;
+    pointer-events: none;
+  }
+  #controls.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+
+  .progress-wrap {
+    width: 100%; height: 6px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    cursor: pointer;
+    position: relative;
+    margin-bottom: 12px;
+    transition: height 0.2s;
+  }
+  .progress-wrap:hover { height: 8px; }
+  .progress-fill {
+    height: 100%; border-radius: 3px;
+    background: var(--accent);
+    transition: background 0.5s;
+    position: relative;
+  }
+  .progress-fill::after {
+    content: '';
+    position: absolute; right: -6px; top: 50%;
+    transform: translateY(-50%) scale(0);
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s;
+    box-shadow: 0 0 8px rgba(0,0,0,0.4);
+  }
+  .progress-wrap:hover .progress-fill::after { transform: translateY(-50%) scale(1); }
+
+  .ctrl-row {
+    display: flex; align-items: center; gap: 16px;
+  }
+  .ctrl-btn {
+    width: 40px; height: 40px;
+    border: none; border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    color: var(--fg);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+  .ctrl-btn:hover { background: rgba(255,255,255,0.15); transform: scale(1.08); }
+  .ctrl-btn.play-btn {
+    width: 48px; height: 48px;
+    font-size: 18px;
+    background: var(--accent);
+    color: #fff;
+  }
+  .ctrl-btn.play-btn:hover { filter: brightness(1.15); }
+
+  .time-display {
+    font-size: 12px; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    min-width: 90px;
+  }
+  .song-name {
+    font-size: 13px; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 200px;
+    color: var(--fg);
+  }
+
+  .volume-wrap {
+    display: flex; align-items: center; gap: 8px;
+    margin-left: auto;
+  }
+  .volume-slider {
+    -webkit-appearance: none;
+    width: 80px; height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  .volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(0,0,0,0.3);
+  }
+
+  /* Top-right buttons */
+  .top-right-btns {
+    position: fixed;
+    top: 24px; right: 24px;
+    z-index: 40;
+    display: flex; gap: 10px;
+    opacity: 0;
+    transition: all 0.6s ease 0.4s;
+    pointer-events: none;
+  }
+  .top-right-btns.visible { opacity: 1; pointer-events: auto; }
+  .top-right-btns button {
+    padding: 10px 18px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--card);
+    color: var(--fg);
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px; font-weight: 400;
+    cursor: pointer;
+    backdrop-filter: blur(12px);
+    transition: all 0.2s;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .top-right-btns button:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
+  .top-right-btns button.active { border-color: #ff4444; color: #ff4444; }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.9);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 32px;
+    font-size: 14px;
+    z-index: 100;
+    opacity: 0;
+    transition: all 0.3s ease;
+    backdrop-filter: blur(20px);
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+
+  /* AI Status Panel */
+  .ai-status {
+    margin-top: 12px;
+    display: flex; align-items: center; gap: 10px;
+    opacity: 0.7;
+  }
+  .ai-indicator {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--muted);
+    font-weight: 400;
+  }
+  .ai-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #555;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .ai-dot.active {
+    background: #4ade80;
+    box-shadow: 0 0 6px rgba(74,222,128,0.5);
+  }
+  .ai-dot.loading {
+    background: #fbbf24;
+    animation: aiPulse 1s infinite;
+  }
+  @keyframes aiPulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+  .ai-gate-label {
+    font-size: 10px; color: var(--muted);
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+  @media (max-width: 640px) {
+    .mood-bars { display: none; }
+    .volume-wrap { display: none; }
+    .song-name { max-width: 120px; }
+    .drop-zone { padding: 40px 24px; }
+    .drop-icon { font-size: 40px; }
+    #mood-panel { top: 16px; left: 16px; }
+    .mood-label { font-size: 22px; }
+    .top-right-btns { top: 16px; right: 16px; flex-direction: column; gap: 6px; }
+    .top-right-btns button { padding: 8px 12px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Canvas -->
+<canvas id="visualizer"></canvas>
+
+<!-- Upload Screen -->
+<div id="upload-screen">
+  <button id="upload-lang-btn" style="position:absolute;top:24px;right:24px;z-index:51;padding:8px 16px;border:1px solid var(--border);border-radius:12px;background:var(--card);color:var(--fg);font-family:'Outfit';font-size:13px;cursor:pointer;backdrop-filter:blur(12px);transition:all 0.2s;display:flex;align-items:center;gap:8px;" onmouseover="this.style.background='rgba(255,255,255,0.1)';this.style.borderColor='rgba(255,255,255,0.2)'" onmouseout="this.style.background='var(--card)';this.style.borderColor='var(--border)'">
+    <i class="fas fa-globe"></i><span id="upload-lang-label">中文</span>
+  </button>
+  <div class="drop-zone" id="drop-zone" role="button" tabindex="0" aria-label="Upload audio file">
+    <div class="drop-icon"><i class="fas fa-music"></i></div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px;font-weight:200;letter-spacing:2px;text-transform:uppercase;" data-i18n="title">Emotion Spectrum</div>
+    <div style="font-size:20px;font-weight:600;margin-bottom:8px;" data-i18n="dropHint">Drop audio file here</div>
+    <div style="font-size:14px;color:var(--muted);font-weight:200;" data-i18n="dropSub">or click to select · MP3 / WAV / OGG / FLAC / MIDI</div>
+    <div style="margin-top:28px;display:flex;align-items:center;justify-content:center;gap:24px;">
+      <button id="mic-start-btn" style="background:none;border:1px solid var(--border);border-radius:10px;padding:8px 16px;color:var(--muted);font-family:'Outfit';font-size:12px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--fg)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+        <i class="fas fa-microphone" style="margin-right:6px;"></i><span data-i18n="useMic">Use Microphone</span>
+      </button>
+      <button id="demo-chopin-btn" style="background:none;border:1px solid var(--border);border-radius:10px;padding:8px 16px;color:var(--muted);font-family:'Outfit';font-size:12px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--fg)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+        <i class="fas fa-music" style="margin-right:6px;"></i><span data-i18n="demoChopin">Demo Music</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Mood Panel -->
+<div id="mood-panel">
+  <div class="mood-label" id="mood-label">Analyzing</div>
+  <div class="mood-confidence" id="mood-confidence">Detecting musical emotion...</div>
+  <div class="mood-bars" id="mood-bars">
+    <div class="mood-bar-row"><span style="width:56px;" data-i18n="moodEnergetic">Energetic</span><div class="mood-bar-track"><div class="mood-bar-fill" data-mood="energetic"></div></div></div>
+    <div class="mood-bar-row"><span style="width:56px;" data-i18n="moodMelancholy">Melancholy</span><div class="mood-bar-track"><div class="mood-bar-fill" data-mood="melancholy"></div></div></div>
+    <div class="mood-bar-row"><span style="width:56px;" data-i18n="moodSerene">Serene</span><div class="mood-bar-track"><div class="mood-bar-fill" data-mood="serene"></div></div></div>
+    <div class="mood-bar-row"><span style="width:56px;" data-i18n="moodJoyful">Joyful</span><div class="mood-bar-track"><div class="mood-bar-fill" data-mood="joyful"></div></div></div>
+    <div class="mood-bar-row"><span style="width:56px;" data-i18n="moodEthereal">Ethereal</span><div class="mood-bar-track"><div class="mood-bar-fill" data-mood="ethereal"></div></div></div>
+  </div>
+  <!-- AI Engine Status -->
+  <div class="ai-status" id="ai-status">
+    <div class="ai-indicator"><span class="ai-dot" id="meyda-dot"></span><span>Meyda</span></div>
+    <div class="ai-indicator"><span class="ai-dot" id="knn-dot"></span><span>KNN</span></div>
+    <div class="ai-gate-label" id="ai-gate-label">AI: 0%</div>
+  </div>
+</div>
+
+<!-- Top-right Buttons -->
+<div class="top-right-btns" id="top-right-btns">
+  <button id="mic-toggle-btn"><i class="fas fa-microphone"></i><span data-i18n="micBtn">Mic</span></button>
+  <button id="lang-toggle-btn"><i class="fas fa-globe"></i><span id="lang-label">中文</span></button>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+  </div>
+  <div class="ctrl-row">
+    <div class="song-name" id="song-name">Unknown Track</div>
+    <div class="time-display"><span id="time-current">0:00</span> / <span id="time-total">0:00</span></div>
+    <button class="ctrl-btn" id="btn-prev" title="Restart" aria-label="Restart"><i class="fas fa-backward-step"></i></button>
+    <button class="ctrl-btn play-btn" id="btn-play" title="Play/Pause" aria-label="Play Pause"><i class="fas fa-play" id="play-icon"></i></button>
+    <div class="volume-wrap">
+      <i class="fas fa-volume-high" style="font-size:13px;color:var(--muted);" id="vol-icon"></i>
+      <input type="range" class="volume-slider" id="volume-slider" min="0" max="100" value="80" aria-label="Volume">
+    </div>
+    <button class="ctrl-btn" id="btn-upload-new" title="Upload new" aria-label="Upload new file"><i class="fas fa-folder-open"></i></button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- Hidden audio element -->
+<audio id="audio-player" crossorigin="anonymous" preload="auto"></audio>
+<input type="file" id="file-input" accept="audio/*,.mid,.midi" style="display:none;">
+
+<script>
+/* ======================================================
+   i18n System
+   ====================================================== */
+const I18N = {
+  en: {
+    title: 'Emotion Spectrum',
+    dropHint: 'Drop audio file here',
+    dropSub: 'or click to select · MP3 / WAV / OGG / FLAC / MIDI',
+    useMic: 'Use Microphone',
+    moodEnergetic: 'Energetic',
+    moodMelancholy: 'Melancholy',
+    moodSerene: 'Serene',
+    moodJoyful: 'Joyful',
+    moodEthereal: 'Ethereal',
+    micBtn: 'Mic',
+    analyzing: 'Analyzing',
+    detecting: 'Detecting musical emotion...',
+    confidence: 'Confidence',
+    unknownTrack: 'Unknown Track',
+    micInput: 'Microphone Input',
+    uploadAudio: 'Please upload an audio file',
+    clickPlay: 'Click play to start',
+    micDenied: 'Cannot access microphone, please check permissions',
+    demoChopin: 'Demo Music',
+    moodNames: {
+      energetic: 'Energetic', melancholy: 'Melancholy', serene: 'Serene',
+      joyful: 'Joyful', ethereal: 'Ethereal', neutral: 'Analyzing'
+    }
+  },
+  zh: {
+    title: '情绪光谱',
+    dropHint: '拖放音频文件到这里',
+    dropSub: '或点击选择文件 · 支持 MP3 / WAV / OGG / FLAC / MIDI',
+    useMic: '使用麦克风',
+    moodEnergetic: '激昂',
+    moodMelancholy: '忧郁',
+    moodSerene: '舒缓',
+    moodJoyful: '欢快',
+    moodEthereal: '空灵',
+    micBtn: '麦克风',
+    analyzing: '分析中',
+    detecting: '正在检测音乐情绪...',
+    confidence: '置信度',
+    unknownTrack: '未知曲目',
+    micInput: '麦克风输入',
+    uploadAudio: '请上传音频文件',
+    clickPlay: '点击播放按钮开始',
+    micDenied: '无法访问麦克风，请检查权限设置',
+    demoChopin: '演示音乐',
+    moodNames: {
+      energetic: '激昂', melancholy: '忧郁', serene: '舒缓',
+      joyful: '欢快', ethereal: '空灵', neutral: '分析中'
+    }
+  }
+};
+
+let currentLang = 'en';
+
+/* ======================================================
+   MIDI Synthesizer — plays MIDI via Tone.js sampler
+   ====================================================== */
+class MidiSynth {
+  constructor() {
+    this.isPlaying = false;
+    this.scheduledEvents = [];
+    this.startTime = 0;
+    this.duration = 0;
+    this.toneStarted = false;
+    this.sampler = null;
+    this.reverb = null;
+  }
+
+  async ensureTone() {
+    if (!this.toneStarted) {
+      await Tone.start();
+      this.toneStarted = true;
+    }
+  }
+
+  async playMidiFile(arrayBuffer, analyzer) {
+    await this.ensureTone();
+    this.stop();
+
+    const midi = new Midi(arrayBuffer);
+    this.duration = midi.duration;
+
+    /* Create a piano sampler using Salamander Grand Piano samples */
+    this.sampler = new Tone.Sampler({
+      urls: {
+        "A0": "A0.mp3", "C1": "C1.mp3", "D#1": "Ds1.mp3", "F#1": "Fs1.mp3",
+        "A1": "A1.mp3", "C2": "C2.mp3", "D#2": "Ds2.mp3", "F#2": "Fs2.mp3",
+        "A2": "A2.mp3", "C3": "C3.mp3", "D#3": "Ds3.mp3", "F#3": "Fs3.mp3",
+        "A3": "A3.mp3", "C4": "C4.mp3", "D#4": "Ds4.mp3", "F#4": "Fs4.mp3",
+        "A4": "A4.mp3", "C5": "C5.mp3", "D#5": "Ds5.mp3", "F#5": "Fs5.mp3",
+        "A5": "A5.mp3", "C6": "C6.mp3", "D#6": "Ds6.mp3", "F#6": "Fs6.mp3",
+        "A6": "A6.mp3", "C7": "C7.mp3",
+        "C8": "C8.mp3"
+      },
+      release: 1.5,
+      baseUrl: "https://tonejs.github.io/audio/salamander/"
+    });
+
+    /* Reverb for richness */
+    this.reverb = new Tone.Reverb({ decay: 2.5, wet: 0.25 });
+    this.sampler.connect(this.reverb);
+    this.reverb.toDestination();
+
+    /* Wait for samples to load */
+    await Tone.loaded();
+
+    /* Connect sampler to a MediaStreamDestination for visualization */
+    this.midiStreamDest = null;
+    try {
+      const toneCtx = Tone.getContext().rawContext;
+      this.midiStreamDest = toneCtx.createMediaStreamDestination();
+      /* Connect sampler output to both destination (speakers) and stream (visualizer) */
+      this.sampler.connect(this.midiStreamDest);
+      this.reverb.connect(this.midiStreamDest);
+    } catch (e) {
+      console.warn('MIDI stream dest creation failed:', e);
+    }
+
+    /* Schedule all notes */
+    for (const track of midi.tracks) {
+      for (const note of track.notes) {
+        const id = Tone.Transport.schedule((time) => {
+          this.sampler.triggerAttackRelease(
+            note.name,
+            note.duration,
+            time,
+            note.velocity
+          );
+        }, note.time);
+        this.scheduledEvents.push(id);
+      }
+    }
+
+    Tone.Transport.start();
+    this.isPlaying = true;
+
+    /* Return the stream for the analyzer */
+    return this.midiStreamDest ? this.midiStreamDest.stream : null;
+  }
+
+  stop() {
+    Tone.Transport.cancel();
+    Tone.Transport.stop();
+    Tone.Transport.position = 0;
+    this.scheduledEvents = [];
+    this.isPlaying = false;
+    if (this.sampler) {
+      try { this.sampler.releaseAll(); } catch(e) {}
+      try { this.sampler.dispose(); } catch(e) {}
+      this.sampler = null;
+    }
+    if (this.reverb) {
+      try { this.reverb.dispose(); } catch(e) {}
+      this.reverb = null;
+    }
+  }
+
+  getCurrentTime() {
+    if (!this.isPlaying) return 0;
+    return Tone.Transport.seconds;
+  }
+
+  getDuration() {
+    return this.duration;
+  }
+
+  seekTo(time) {
+    Tone.Transport.seconds = time;
+  }
+}
+
+function t(key) {
+  return I18N[currentLang][key] || I18N['en'][key] || key;
+}
+
+function applyI18N() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (I18N[currentLang][key] !== undefined) {
+      el.textContent = I18N[currentLang][key];
+    }
+  });
+  document.getElementById('lang-label').textContent = currentLang === 'en' ? '中文' : 'EN';
+  const uploadLabel = document.getElementById('upload-lang-label');
+  if (uploadLabel) uploadLabel.textContent = currentLang === 'en' ? '中文' : 'EN';
+}
+
+/* ======================================================
+   Utility Functions
+   ====================================================== */
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function formatTime(s) {
+  if (!isFinite(s) || s < 0) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return m + ':' + (sec < 10 ? '0' : '') + sec;
+}
+function rgbStr(c, a) {
+  return a !== undefined ? `rgba(${c.r},${c.g},${c.b},${a})` : `rgb(${c.r},${c.g},${c.b})`;
+}
+
+/* ======================================================
+   Mood Color Palette
+   ====================================================== */
+const MOOD_COLORS = {
+  energetic: { primary: '#FF4500', secondary: '#FF8C00', tertiary: '#FFD700', rgb: {r:255,g:69,b:0} },
+  melancholy: { primary: '#2C5F8A', secondary: '#4A8CC7', tertiary: '#7BB8E0', rgb: {r:44,g:95,b:138} },
+  serene:     { primary: '#1FA864', secondary: '#3DD68C', tertiary: '#8EEEBC', rgb: {r:31,g:168,b:100} },
+  joyful:     { primary: '#F7A828', secondary: '#FF6B9D', tertiary: '#FFD93E', rgb: {r:247,g:168,b:40} },
+  ethereal:   { primary: '#00A8A8', secondary: '#00CED1', tertiary: '#7FFFD4', rgb: {r:0,g:168,b:168} },
+  neutral:    { primary: '#6B6880', secondary: '#8A8A9A', tertiary: '#A0A0B0', rgb: {r:107,g:104,b:128} }
+};
+
+/* ======================================================
+   Mood Visual Parameters (per-scheme)
+   ====================================================== */
+const MOOD_PARAMS = {
+  energetic: {
+    trail: 0.12, bgPulse: true,
+    starBrightBase: 0.8, starBrightEnergy: 0.3,
+    aurora: false,
+    rayN: 24, rayL: 0.7,
+    geo: 'star', geoN: 2,
+    specW: 2.8,
+    connDist: 0,
+    beatFlash: 0.35,
+    particleSpeed: 4, particleSize: 2.5, particleBehavior: 'explosive',
+    rippleIntensity: 0.35,
+    waveAmpBase: 30, waveAmpEnergy: 35
+  },
+  melancholy: {
+    trail: 0.22, bgPulse: false,
+    starBrightBase: 0.3, starBrightEnergy: 0.2,
+    aurora: false,
+    rayN: 0, rayL: 0,
+    geo: 'ring', geoN: 3,
+    specW: 2.0,
+    connDist: 0,
+    beatFlash: 0.15,
+    particleSpeed: 1, particleSize: 1, particleBehavior: 'falling',
+    rippleIntensity: 0.15,
+    waveAmpBase: 20, waveAmpEnergy: 20
+  },
+  serene: {
+    trail: 0.28, bgPulse: false,
+    starBrightBase: 0.5, starBrightEnergy: 0.3,
+    aurora: true,
+    rayN: 0, rayL: 0,
+    geo: 'circles', geoN: 5,
+    specW: 1.2,
+    connDist: 110,
+    beatFlash: 0.06,
+    particleSpeed: 0.5, particleSize: 1.5, particleBehavior: 'floating',
+    rippleIntensity: 0.06,
+    waveAmpBase: 25, waveAmpEnergy: 25
+  },
+  joyful: {
+    trail: 0.15, bgPulse: false,
+    starBrightBase: 0.7, starBrightEnergy: 0.3,
+    aurora: false,
+    rayN: 10, rayL: 0.35,
+    geo: 'polygon', geoN: 3,
+    specW: 2.2,
+    connDist: 0,
+    beatFlash: 0.25,
+    particleSpeed: 3, particleSize: 2, particleBehavior: 'bouncing',
+    rippleIntensity: 0.25,
+    waveAmpBase: 28, waveAmpEnergy: 30
+  },
+  ethereal: {
+    trail: 0.25, bgPulse: false,
+    starBrightBase: 0.5, starBrightEnergy: 0.3,
+    aurora: true,
+    rayN: 0, rayL: 0,
+    geo: 'spiral', geoN: 1,
+    specW: 3.5,
+    connDist: 110,
+    beatFlash: 0.08,
+    particleSpeed: 0.8, particleSize: 3, particleBehavior: 'orbiting',
+    rippleIntensity: 0.08,
+    waveAmpBase: 22, waveAmpEnergy: 22
+  }
+};
+
+/* ======================================================
+   Acoustic Prior Vectors (Meyda 16-dim, Calibrated)
+   16维 = 13 MFCC(归一化) + spectralCentroid + spectralRolloff + RMS
+   基于钢琴音乐的声学特征校准，每种情绪2-3个变体
+   ====================================================== */
+const ACOUSTIC_PRIOR_VECTORS = {
+  energetic: [
+    /* 强力度,明亮,打击感强 (如土耳其进行曲) */
+    [0.85,0.60,0.50,0.40,0.35,0.30,0.25,0.20,0.18,0.15,0.12,0.10,0.08, 0.50,0.40,0.70],
+    /* 中强,非常明亮 (如莫扎特K.311) */
+    [0.70,0.65,0.55,0.45,0.35,0.28,0.22,0.18,0.15,0.12,0.10,0.08,0.06, 0.55,0.45,0.55],
+    /* 重低音激昂 */
+    [0.80,0.45,0.40,0.35,0.30,0.25,0.20,0.18,0.15,0.12,0.10,0.08,0.06, 0.35,0.30,0.65],
+  ],
+  melancholy: [
+    /* 柔和,暗色,慢速 (如悲怆慢板) */
+    [0.30,0.35,0.30,0.25,0.20,0.18,0.15,0.12,0.10,0.08,0.06,0.05,0.04, 0.20,0.15,0.15],
+    /* 中弱,略暖 (如肖邦离别曲) */
+    [0.40,0.40,0.35,0.28,0.22,0.18,0.15,0.12,0.10,0.08,0.06,0.05,0.04, 0.25,0.20,0.20],
+    /* 极弱,极暗 */
+    [0.25,0.30,0.25,0.20,0.18,0.15,0.12,0.10,0.08,0.06,0.05,0.04,0.03, 0.15,0.12,0.08],
+  ],
+  serene: [
+    /* 温柔,温暖 (如莫扎特慢板乐章) */
+    [0.35,0.45,0.40,0.32,0.25,0.20,0.18,0.15,0.12,0.10,0.08,0.06,0.05, 0.30,0.22,0.25],
+    /* 极柔,丰富泛音 */
+    [0.30,0.50,0.45,0.35,0.28,0.22,0.18,0.15,0.12,0.10,0.08,0.06,0.05, 0.35,0.25,0.18],
+    /* 中弱,均衡 */
+    [0.38,0.48,0.42,0.33,0.26,0.21,0.17,0.14,0.11,0.09,0.07,0.06,0.04, 0.32,0.24,0.22],
+  ],
+  joyful: [
+    /* 明亮,弹跳 (如莫扎特K.545) */
+    [0.60,0.58,0.50,0.40,0.32,0.25,0.20,0.16,0.13,0.10,0.08,0.06,0.05, 0.45,0.35,0.50],
+    /* 中亮,清透 */
+    [0.55,0.55,0.48,0.38,0.30,0.24,0.19,0.15,0.12,0.10,0.08,0.06,0.05, 0.42,0.32,0.45],
+    /* 轻盈,闪烁 */
+    [0.50,0.62,0.55,0.42,0.33,0.26,0.20,0.16,0.13,0.10,0.08,0.06,0.05, 0.48,0.38,0.40],
+  ],
+  ethereal: [
+    /* 极柔,极高泛音 (如德彪西风格) */
+    [0.20,0.55,0.60,0.55,0.48,0.40,0.32,0.25,0.20,0.16,0.13,0.10,0.08, 0.55,0.50,0.08],
+    /* 柔和,微光 */
+    [0.18,0.58,0.62,0.52,0.45,0.38,0.30,0.24,0.19,0.15,0.12,0.09,0.07, 0.60,0.55,0.06],
+    /* 极弱,延绵 */
+    [0.15,0.52,0.58,0.50,0.44,0.36,0.28,0.22,0.18,0.14,0.11,0.08,0.06, 0.50,0.45,0.05],
+  ]
+};
+
+/* ======================================================
+   Audio Analyzer
+   ====================================================== */
+class AudioAnalyzer {
+  constructor() {
+    this.ctx = null;
+    this.analyser = null;
+    this.gainNode = null;
+    this.source = null;
+    this.freqData = null;
+    this.timeData = null;
+    this.prevEnergy = 0;
+    this.beatThreshold = 0;
+    this.beatDecay = 0;
+    this.isBeat = false;
+  }
+
+  initFromElement(audioEl) {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (this.source) {
+      try { this.source.disconnect(); } catch(e) {}
+    }
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.analyser.smoothingTimeConstant = 0.82;
+    this.gainNode = this.ctx.createGain();
+    this.gainNode.gain.value = 0.8;
+    this.source = this.ctx.createMediaElementSource(audioEl);
+    this.source.connect(this.analyser);
+    this.analyser.connect(this.gainNode);
+    this.gainNode.connect(this.ctx.destination);
+    const len = this.analyser.frequencyBinCount;
+    this.freqData = new Uint8Array(len);
+    this.timeData = new Uint8Array(len);
+    return this.source;  /* expose for Meyda */
+  }
+
+  initFromStream(stream) {
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (this.source) {
+      try { this.source.disconnect(); } catch(e) {}
+    }
+    this.analyser = this.ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.analyser.smoothingTimeConstant = 0.82;
+    this.gainNode = this.ctx.createGain();
+    this.gainNode.gain.value = 1.0;
+    this.source = this.ctx.createMediaStreamSource(stream);
+    this.source.connect(this.analyser);
+    const len = this.analyser.frequencyBinCount;
+    this.freqData = new Uint8Array(len);
+    this.timeData = new Uint8Array(len);
+    return this.source;  /* expose for Meyda */
+  }
+
+  setVolume(v) {
+    if (this.gainNode) this.gainNode.gain.value = v;
+  }
+
+  update() {
+    if (!this.analyser) return null;
+    this.analyser.getByteFrequencyData(this.freqData);
+    this.analyser.getByteTimeDomainData(this.timeData);
+    return this.extractFeatures();
+  }
+
+  extractFeatures() {
+    const freq = this.freqData;
+    const len = freq.length;
+    const nyquist = this.ctx.sampleRate / 2;
+    const binW = nyquist / len;
+
+    const lowEnd = Math.min(Math.floor(250 / binW), len - 1);
+    const midEnd = Math.min(Math.floor(4000 / binW), len - 1);
+
+    let lowE = 0, midE = 0, highE = 0, totalE = 0, wSum = 0;
+    for (let i = 0; i < len; i++) {
+      const v = freq[i] / 255;
+      const v2 = v * v;
+      totalE += v2;
+      wSum += i * v;
+      if (i < lowEnd) lowE += v2;
+      else if (i < midEnd) midE += v2;
+      else highE += v2;
+    }
+
+    const rms = Math.sqrt(totalE / len);
+    const brightness = totalE > 0.001 ? wSum / (totalE * len) : 0;
+    const bassRatio = totalE > 0.001 ? lowE / totalE : 0;
+
+    /* Beat detection */
+    const instantE = lowE * 10;
+    this.beatDecay *= 0.95;
+    this.beatThreshold = 0.3 + this.beatDecay * 0.7;
+    this.isBeat = instantE > this.beatThreshold && instantE > 0.15;
+    if (this.isBeat) this.beatDecay = instantE;
+
+    return { rms, brightness, bassRatio, lowE, midE, highE, totalE, isBeat: this.isBeat };
+  }
+}
+
+/* ======================================================
+   Acoustic Feature Extractor (Meyda Engine)
+   16维声学特征向量: 13 MFCC + spectralCentroid + spectralRolloff + RMS
+   特征提取频率 ~15Hz (每66ms一次)
+   ====================================================== */
+class AcousticFeatureExtractor {
+  constructor() {
+    this.meydaAnalyzer = null;
+    this.lastFeatures16d = null;       /* 归一化后的16维向量 */
+    this.lastRawFeatures = null;       /* Meyda原始输出 */
+    this.isRunning = false;
+    this.lastExtractTime = 0;
+    this.extractInterval = 66;         /* ~15Hz */
+    this.status = 'unloaded';          /* unloaded / loading / active / error */
+    this._featureAccum = null;
+    this._featureCount = 0;
+  }
+
+  /* 初始化Meyda分析器, 接入音频管线 */
+  init(audioCtx, sourceNode) {
+    /* 先停止旧的分析器,避免资源泄漏 */
+    this.stop();
+
+    if (typeof Meyda === 'undefined') {
+      console.warn('[Meyda] Library not loaded, AI features disabled');
+      this.status = 'error';
+      return false;
+    }
+
+    try {
+      this.status = 'loading';
+      this.meydaAnalyzer = Meyda.createMeydaAnalyzer({
+        audioContext: audioCtx,
+        source: sourceNode,
+        bufferSize: 512,
+        featureExtractors: ['mfcc', 'spectralCentroid', 'spectralRolloff', 'rms'],
+        callback: (features) => {
+          const now = performance.now();
+          /* 限频: 只在interval间隔内处理 */
+          if (now - this.lastExtractTime < this.extractInterval) return;
+          this.lastExtractTime = now;
+          this.processFeatures(features);
+        }
+      });
+      this.meydaAnalyzer.start();
+      this.isRunning = true;
+      this.status = 'active';
+      console.log('[Meyda] Acoustic feature extractor started at ~15Hz');
+      return true;
+    } catch (e) {
+      console.warn('[Meyda] Initialization failed:', e);
+      this.status = 'error';
+      return false;
+    }
+  }
+
+  /* 将Meyda原始特征归一化为标准16维向量 */
+  processFeatures(raw) {
+    if (!raw) return;
+    this.lastRawFeatures = raw;
+
+    const mfcc = raw.mfcc || new Array(13).fill(0);
+    const centroid = raw.spectralCentroid || 0;
+    const rolloff = raw.spectralRolloff || 0;
+    const rms = raw.rms || 0;
+
+    /* 归一化策略:
+       MFCC[0]: 典型范围[-30,30] → (x+30)/60
+       MFCC[1-12]: 典型范围[-15,15] → (x+15)/30
+       Spectral Centroid: [0,8000]Hz → x/8000
+       Spectral Rolloff: [0,22050]Hz → x/22050
+       RMS: [0,1] 保持不变 */
+    const normalized = [
+      ...mfcc.map((v, i) =>
+        i === 0 ? clamp((v + 30) / 60, 0, 1) : clamp((v + 15) / 30, 0, 1)
+      ),
+      clamp(centroid / 8000, 0, 1),
+      clamp(rolloff / 22050, 0, 1),
+      clamp(rms, 0, 1)
+    ];
+
+    /* 简单EMA平滑,减少帧间抖动 */
+    if (this.lastFeatures16d) {
+      const smooth = 0.6;
+      for (let i = 0; i < normalized.length; i++) {
+        normalized[i] = lerp(this.lastFeatures16d[i], normalized[i], smooth);
+      }
+    }
+    this.lastFeatures16d = normalized;
+  }
+
+  getFeatures() {
+    return this.lastFeatures16d;
+  }
+
+  stop() {
+    if (this.meydaAnalyzer) {
+      try { this.meydaAnalyzer.stop(); } catch(e) {}
+      this.isRunning = false;
+      this.status = 'unloaded';
+    }
+  }
+}
+
+/* ======================================================
+   KNN Mood Classifier (Lightweight, No TF.js Dependency)
+   零训练KNN实例学习: 欧氏距离+反距离加权
+   推理频率 ~8Hz (每125ms一次)
+   ====================================================== */
+class KNNMoodClassifier {
+  constructor() {
+    this.priors = [];                /* [{vector:[], label:string}] */
+    this.k = 5;                      /* K近邻数 */
+    this.lastPrediction = null;      /* 缓存上一次预测 */
+    this.lastInferenceTime = 0;
+    this.inferenceInterval = 125;    /* ~8Hz */
+    this.status = 'uninitialized';   /* uninitialized / ready / active */
+    this.inferenceCount = 0;
+  }
+
+  /* 注入专家先验向量 */
+  init() {
+    for (let mood in ACOUSTIC_PRIOR_VECTORS) {
+      for (let vec of ACOUSTIC_PRIOR_VECTORS[mood]) {
+        this.priors.push({ vector: vec, label: mood });
+      }
+    }
+    this.status = 'ready';
+    console.log(`[KNN] Initialized with ${this.priors.length} prior vectors, K=${this.k}`);
+  }
+
+  /* KNN推理,带频率限制 */
+  predict(featureVector16d) {
+    if (!featureVector16d || this.priors.length === 0) return null;
+
+    /* 限频 */
+    const now = performance.now();
+    if (now - this.lastInferenceTime < this.inferenceInterval) {
+      return this.lastPrediction;
+    }
+    this.lastInferenceTime = now;
+    this.inferenceCount++;
+    this.status = 'active';
+
+    /* 每50次推理输出一次调试日志 */
+    if (this.inferenceCount % 50 === 1) {
+      console.log(`[KNN] Inference #${this.inferenceCount}, input RMS=${featureVector16d[15]?.toFixed(3)}, centroid=${featureVector16d[13]?.toFixed(3)}`);
+    }
+
+    /* 计算到所有先验的欧氏距离 */
+    const distances = this.priors.map(p => ({
+      distance: this.euclideanDistance(featureVector16d, p.vector),
+      label: p.label
+    }));
+
+    /* 按距离排序,取前K个近邻 */
+    distances.sort((a, b) => a.distance - b.distance);
+    const neighbors = distances.slice(0, this.k);
+
+    /* 反距离加权投票 */
+    const weights = { energetic: 0, melancholy: 0, serene: 0, joyful: 0, ethereal: 0 };
+    let totalWeight = 0;
+    for (const n of neighbors) {
+      const w = 1 / (n.distance * n.distance + 0.0001);  /* 平方反距离,强化近邻影响 */
+      weights[n.label] += w;
+      totalWeight += w;
+    }
+
+    /* 归一化 */
+    if (totalWeight > 0) {
+      for (let k in weights) weights[k] /= totalWeight;
+    }
+
+    this.lastPrediction = weights;
+    return weights;
+  }
+
+  /* 欧氏距离 */
+  euclideanDistance(a, b) {
+    let sum = 0;
+    const len = Math.min(a.length, b.length);
+    for (let i = 0; i < len; i++) {
+      sum += (a[i] - b[i]) ** 2;
+    }
+    return Math.sqrt(sum);
+  }
+
+  /* 动态门控计算: 根据能量和置信度决定AI权重 */
+  computeAIGate(aiWeights, smoothedRms) {
+    if (!aiWeights) return 0;
+
+    const maxConf = Math.max(...Object.values(aiWeights));
+
+    /* 能量门控: 极低音量时AI不可靠 */
+    let energyGate = 0;
+    if (smoothedRms < 0.01) {
+      energyGate = 0;
+    } else if (smoothedRms < 0.03) {
+      energyGate = 0.25;
+    } else if (smoothedRms < 0.08) {
+      energyGate = 0.40;
+    } else if (smoothedRms < 0.15) {
+      energyGate = 0.50;
+    } else {
+      energyGate = 0.60;
+    }
+
+    /* 置信度门控: AI最大概率过低时不可靠 */
+    let confidenceGate = 1;
+    if (maxConf < 0.22) {
+      confidenceGate = 0.2;
+    } else if (maxConf < 0.30) {
+      confidenceGate = 0.5;
+    } else if (maxConf < 0.40) {
+      confidenceGate = 0.75;
+    }
+
+    return energyGate * confidenceGate;
+  }
+}
+
+/* ======================================================
+   Mood Classifier
+   ====================================================== */
+class MoodClassifier {
+  constructor() {
+    this.smoothed = { rms: 0, brightness: 0, bassRatio: 0 };
+    this.weights = { energetic: 0, melancholy: 0, serene: 0, joyful: 0, ethereal: 0 };
+    this.dominant = 'neutral';
+    this.confidence = 0;
+    this.blendedColor = { r: 107, g: 104, b: 128 };
+    this.targetColor = { r: 107, g: 104, b: 128 };
+    /* Blended visual params */
+    this.params = { ...MOOD_PARAMS.energetic };
+    /* 双引擎融合状态 */
+    this.aiGate = 0;                  /* 当前AI门控值 */
+    this.ruleWeights = { ...this.weights };  /* 规则基线权重 */
+    this.aiWeights = null;            /* KNN AI权重 */
+    this.moodTransitionBoost = 0;     /* 情绪转换增强 */
+    this.prevDominant = 'neutral';
+    this.transitionFrom = null;
+  }
+
+  classify(features, knnWeights = null) {
+    if (!features) return;
+    const a = 0.12;
+    this.smoothed.rms = lerp(this.smoothed.rms, features.rms, a);
+    this.smoothed.brightness = lerp(this.smoothed.brightness, features.brightness, a);
+    this.smoothed.bassRatio = lerp(this.smoothed.bassRatio, features.bassRatio, a);
+
+    const { rms, brightness, bassRatio } = this.smoothed;
+
+    /* 规则基线权重计算 (Rule Baseline) */
+    this.ruleWeights.energetic = clamp(rms * 5, 0, 1) * clamp(brightness * 4, 0, 1) * clamp(1 - bassRatio * 0.5, 0, 1);
+    this.ruleWeights.melancholy = clamp(1 - rms * 4, 0, 1) * clamp(bassRatio * 2.5, 0, 1) * clamp(1 - brightness * 2, 0, 1);
+    this.ruleWeights.ethereal = clamp(1 - rms * 3.5, 0, 1) * clamp(brightness * 3, 0, 1) * clamp(1 - bassRatio, 0, 1);
+    this.ruleWeights.joyful = clamp(rms * 3.5, 0, 1) * clamp(1 - bassRatio * 1.5, 0, 1) * clamp(1 - brightness * 1.5, 0.2, 1);
+    this.ruleWeights.serene = clamp(1 - rms * 3, 0, 1) * clamp(1 - brightness * 2.5, 0, 1) * clamp(1 - bassRatio * 1.5, 0, 1);
+
+    /* 归一化规则基线 */
+    let ruleTotal = 0;
+    for (let k in this.ruleWeights) ruleTotal += this.ruleWeights[k];
+    if (ruleTotal > 0.001) {
+      for (let k in this.ruleWeights) this.ruleWeights[k] /= ruleTotal;
+    } else {
+      for (let k in this.ruleWeights) this.ruleWeights[k] = 0.2;
+    }
+
+    /* 双引擎融合 (Dynamic Gating Fusion) */
+    this.aiWeights = knnWeights;
+    /* 注意: aiGate 由调用方在外部通过 computeAIGate() 计算，
+       此处不重置，否则会覆盖外部设置的值 */
+
+    /* 直接使用当前权重(先复制规则基线) */
+    for (let k in this.weights) this.weights[k] = this.ruleWeights[k];
+
+    /* 应用AI融合 */
+    if (knnWeights && this.aiGate > 0) {
+      const ruleGate = 1 - this.aiGate;
+      for (let k in this.weights) {
+        this.weights[k] = this.ruleWeights[k] * ruleGate + (knnWeights[k] || 0) * this.aiGate;
+      }
+    }
+
+    /* 情绪转换增强 */
+    this.moodTransitionBoost *= 0.96;
+    if (this.moodTransitionBoost > 0.01) {
+      for (let k in this.weights) {
+        this.weights[k] = clamp(this.weights[k] + this.moodTransitionBoost * 0.15, 0, 1);
+      }
+    }
+
+    /* 重新归一化融合后的权重 */
+    let total = 0;
+    for (let k in this.weights) total += this.weights[k];
+    if (total > 0.001) {
+      for (let k in this.weights) this.weights[k] /= total;
+    } else {
+      for (let k in this.weights) this.weights[k] = 0.2;
+    }
+
+    /* Find dominant mood */
+    let maxW = 0;
+    this.dominant = 'neutral';
+    for (let k in this.weights) {
+      if (this.weights[k] > maxW) { maxW = this.weights[k]; this.dominant = k; }
+    }
+    this.confidence = maxW;
+    if (maxW < 0.22) this.dominant = 'neutral';
+
+    /* 情绪转换检测 — 主导情绪变化时触发transitionBoost */
+    if (this.dominant !== 'neutral' && this.dominant !== this.prevDominant && this.prevDominant !== 'neutral') {
+      this.moodTransitionBoost = 0.25;
+      this.transitionFrom = this.prevDominant;
+    }
+    this.prevDominant = this.dominant;
+
+    /* Blend target color */
+    let tr = 0, tg = 0, tb = 0;
+    for (let k in this.weights) {
+      const c = MOOD_COLORS[k].rgb;
+      const w = this.weights[k];
+      tr += c.r * w; tg += c.g * w; tb += c.b * w;
+    }
+    this.targetColor = { r: Math.round(tr), g: Math.round(tg), b: Math.round(tb) };
+
+    /* Blend visual params (numeric interpolation) */
+    this.blendParams();
+
+    return { dominant: this.dominant, weights: {...this.weights}, confidence: this.confidence };
+  }
+
+  blendParams() {
+    const w = this.weights;
+    const p = {};
+    /* For numeric params, weight-average */
+    const numericKeys = ['trail','starBrightBase','starBrightEnergy','rayN','rayL','geoN',
+      'specW','connDist','beatFlash','particleSpeed','particleSize',
+      'rippleIntensity','waveAmpBase','waveAmpEnergy'];
+    for (let key of numericKeys) {
+      let v = 0;
+      for (let mood in w) {
+        v += MOOD_PARAMS[mood][key] * w[mood];
+      }
+      p[key] = v;
+    }
+    /* For boolean params, use dominant mood */
+    p.bgPulse = this.dominant !== 'neutral' ? MOOD_PARAMS[this.dominant].bgPulse : false;
+    p.aurora = this.dominant !== 'neutral' ? MOOD_PARAMS[this.dominant].aurora : false;
+    /* Aurora: blend — show if serene+ethereal combined > 0.4 */
+    p.aurora = (w.serene + w.ethereal) > 0.4;
+    /* Rays: show if energetic+joyful > 0.4 */
+    p.rayN = (w.energetic + w.joyful) > 0.4 ? p.rayN : 0;
+    /* Connections: show if serene+ethereal > 0.4 */
+    p.connDist = (w.serene + w.ethereal) > 0.4 ? p.connDist : 0;
+    /* Geo type: use dominant */
+    p.geo = this.dominant !== 'neutral' ? MOOD_PARAMS[this.dominant].geo : 'ring';
+    /* Particle behavior: use dominant */
+    p.particleBehavior = this.dominant !== 'neutral' ? MOOD_PARAMS[this.dominant].particleBehavior : 'floating';
+
+    this.params = p;
+  }
+
+  updateColor() {
+    const a = 0.04;
+    this.blendedColor.r = lerp(this.blendedColor.r, this.targetColor.r, a);
+    this.blendedColor.g = lerp(this.blendedColor.g, this.targetColor.g, a);
+    this.blendedColor.b = lerp(this.blendedColor.b, this.targetColor.b, a);
+  }
+}
+
+/* ======================================================
+   Particle System
+   ====================================================== */
+class Particle {
+  constructor() { this.alive = false; }
+  spawn(x, y, vx, vy, size, life, color, type) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.size = size; this.baseSize = size;
+    this.life = life; this.maxLife = life;
+    this.color = color;
+    this.type = type;
+    this.alive = true;
+    this.angle = Math.random() * Math.PI * 2;
+    this.angularV = (Math.random() - 0.5) * 0.03;
+    this.orbitR = 50 + Math.random() * 100;
+    return this;
+  }
+
+  update(dt, energy, beat) {
+    if (!this.alive) return;
+    this.life -= dt;
+    if (this.life <= 0) { this.alive = false; return; }
+
+    const lifeRatio = this.life / this.maxLife;
+
+    switch (this.type) {
+      case 'explosive':
+        this.vx *= 0.97; this.vy *= 0.97;
+        this.vy -= 0.02 * energy;
+        this.x += this.vx; this.y += this.vy;
+        this.size = this.baseSize * lifeRatio * (0.5 + energy * 2);
+        break;
+      case 'falling':
+        this.vy += 0.015;
+        this.vx *= 0.995;
+        this.x += this.vx; this.y += this.vy;
+        this.size = this.baseSize * (0.3 + lifeRatio * 0.7);
+        break;
+      case 'floating':
+        this.angle += this.angularV;
+        this.x += Math.cos(this.angle) * 0.3;
+        this.y -= 0.15 + energy * 0.3;
+        this.size = this.baseSize * (0.6 + Math.sin(this.life * 3) * 0.3);
+        break;
+      case 'bouncing':
+        this.vy += 0.04;
+        if (beat && this.life > this.maxLife * 0.5) {
+          this.vy = -(2 + Math.random() * 3) * energy;
+          this.vx = (Math.random() - 0.5) * 2;
+        }
+        this.x += this.vx; this.y += this.vy;
+        this.size = this.baseSize * (0.5 + lifeRatio * 0.5);
+        break;
+      case 'orbiting':
+        this.angle += this.angularV * 0.5;
+        const orbitSpeed = 0.01 + energy * 0.02;
+        this.angle += orbitSpeed;
+        this.orbitR += Math.sin(this.life * 2) * 0.3;
+        this.x += Math.cos(this.angle) * 0.8;
+        this.y += Math.sin(this.angle) * 0.8;
+        this.size = this.baseSize * (0.4 + lifeRatio * 0.6 + energy * 0.5);
+        break;
+    }
+  }
+
+  draw(ctx) {
+    if (!this.alive) return;
+    const alpha = clamp(this.life / this.maxLife, 0, 1);
+    const s = Math.max(0.5, this.size);
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.7;
+    if (this.type === 'orbiting') {
+      /* Nebula effect */
+      const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, s * 3);
+      grad.addColorStop(0, rgbStr(this.color, 0.3));
+      grad.addColorStop(1, rgbStr(this.color, 0));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, s * 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, s * 2);
+      grad.addColorStop(0, rgbStr(this.color, 0.9));
+      grad.addColorStop(0.4, rgbStr(this.color, 0.3));
+      grad.addColorStop(1, rgbStr(this.color, 0));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, s * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+class ParticlePool {
+  constructor(maxCount) {
+    this.pool = [];
+    for (let i = 0; i < maxCount; i++) {
+      this.pool.push(new Particle());
+    }
+  }
+
+  get() {
+    for (let p of this.pool) {
+      if (!p.alive) return p;
+    }
+    return null;
+  }
+
+  drawAll(ctx) {
+    for (let p of this.pool) {
+      if (p.alive) p.draw(ctx);
+    }
+  }
+
+  aliveParticles() {
+    return this.pool.filter(p => p.alive);
+  }
+}
+
+/* ======================================================
+   Main Visualizer — 11 Visual Layers
+   ====================================================== */
+class Visualizer {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.analyzer = new AudioAnalyzer();
+    this.classifier = new MoodClassifier();
+    this.featureExtractor = new AcousticFeatureExtractor();
+    this.knnClassifier = new KNNMoodClassifier();
+    this.knnClassifier.init();  /* 注入先验向量 */
+    this.particles = new ParticlePool(600);
+    this.features = null;
+    this.moodResult = null;
+    this.running = false;
+    this.time = 0;
+    this.lastTime = 0;
+
+    /* Background */
+    this.bgColor = { r: 10, g: 10, b: 15 };
+    this.targetBg = { r: 10, g: 10, b: 15 };
+
+    /* Stars (160 stars) */
+    this.stars = [];
+    for (let i = 0; i < 160; i++) {
+      this.stars.push({
+        x: Math.random(), y: Math.random(),
+        baseBright: 0.3 + Math.random() * 0.7,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.5 + Math.random() * 1.5
+      });
+    }
+
+    /* Aurora (3 bands) */
+    this.auroraBands = [];
+    for (let i = 0; i < 3; i++) {
+      this.auroraBands.push({
+        yOffset: 0.2 + i * 0.15,
+        amplitude: 30 + i * 15,
+        frequency: 0.003 + i * 0.001,
+        speed: 0.3 + i * 0.2,
+        width: 40 + i * 20,
+        phase: i * 1.2
+      });
+    }
+
+    /* Ripples */
+    this.ripples = [];
+
+    /* Geometry state */
+    this.geoRotation = 0;
+
+    /* Flash state */
+    this.flashAlpha = 0;
+
+    this.resize();
+    window.addEventListener('resize', () => this.resize());
+  }
+
+  resize() {
+    const dpr = window.devicePixelRatio || 1;
+    this.W = window.innerWidth;
+    this.H = window.innerHeight;
+    this.canvas.width = this.W * dpr;
+    this.canvas.height = this.H * dpr;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.cx = this.W / 2;
+    this.cy = this.H / 2;
+  }
+
+  start() {
+    this.running = true;
+    this.lastTime = performance.now();
+    this.loop();
+  }
+
+  stop() { this.running = false; }
+
+  loop() {
+    if (!this.running) return;
+    const now = performance.now();
+    const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+    this.lastTime = now;
+    this.time += dt;
+
+    this.features = this.analyzer.update();
+    if (this.features) {
+      /* 双引擎管线: 规则基线 + KNN AI */
+      let knnWeights = null;
+      const features16d = this.featureExtractor.getFeatures();
+      if (features16d) {
+        knnWeights = this.knnClassifier.predict(features16d);
+      }
+      /* 计算AI门控值 */
+      if (knnWeights) {
+        this.classifier.aiGate = this.knnClassifier.computeAIGate(
+          knnWeights, this.classifier.smoothed.rms
+        );
+      } else {
+        this.classifier.aiGate = 0;
+      }
+      /* 定期输出AI融合调试日志 */
+      if (this.classifier.aiGate > 0 && this.knnClassifier.inferenceCount % 50 === 1) {
+        const dom = knnWeights ? Object.entries(knnWeights).sort((a,b) => b[1]-a[1])[0] : ['none',0];
+        console.log(`[AI Fusion] gate=${this.classifier.aiGate.toFixed(3)}, KNN dominant=${dom[0]}(${dom[1]?.toFixed(2)}), Meyda=${this.featureExtractor.status}`);
+      }
+      this.moodResult = this.classifier.classify(this.features, knnWeights);
+    }
+    this.classifier.updateColor();
+
+    this.spawnParticles(dt);
+    this.updateParticles(dt);
+    this.updateRipples(dt);
+    this.render(dt);
+    this.updateUI();
+
+    requestAnimationFrame(() => this.loop());
+  }
+
+  /* ---- Particle Spawning ---- */
+  spawnParticles(dt) {
+    if (!this.features || !this.moodResult) return;
+    const f = this.features;
+    const w = this.moodResult.weights;
+    const energy = clamp(f.rms * 5, 0, 1);
+    const mp = this.classifier.params;
+    const color = this.classifier.blendedColor;
+    const cx = this.cx, cy = this.cy;
+    const baseRate = 2 + energy * 15;
+
+    for (let mood in w) {
+      const rate = baseRate * w[mood] * dt * 60;
+      const count = Math.floor(rate);
+      for (let i = 0; i < count; i++) {
+        const p = this.particles.get();
+        if (!p) break;
+        const moodColor = MOOD_COLORS[mood].rgb;
+        const mc = {
+          r: lerp(color.r, moodColor.r, 0.6),
+          g: lerp(color.g, moodColor.g, 0.6),
+          b: lerp(color.b, moodColor.b, 0.6)
+        };
+
+        const behavior = MOOD_PARAMS[mood].particleBehavior;
+        const spd = mp.particleSpeed;
+        const sz = mp.particleSize;
+
+        switch (behavior) {
+          case 'explosive': {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = (1 + energy * spd + Math.random() * 3) * (1 + energy * 3);
+            p.spawn(cx, cy,
+              Math.cos(angle) * speed, Math.sin(angle) * speed,
+              sz * (0.5 + Math.random()), 0.8 + Math.random() * 0.8,
+              mc, 'explosive');
+            break;
+          }
+          case 'falling': {
+            const x = cx + (Math.random() - 0.5) * this.W * 0.8;
+            p.spawn(x, -10,
+              (Math.random() - 0.5) * 0.5, 0.3 + Math.random() * 0.5,
+              sz * (0.5 + Math.random()), 2 + Math.random() * 3,
+              mc, 'falling');
+            break;
+          }
+          case 'floating': {
+            const x = cx + (Math.random() - 0.5) * this.W * 0.7;
+            p.spawn(x, this.H + 10,
+              (Math.random() - 0.5) * 0.2, 0,
+              sz * (0.8 + Math.random()), 3 + Math.random() * 3,
+              mc, 'floating');
+            break;
+          }
+          case 'bouncing': {
+            const x = cx + (Math.random() - 0.5) * this.W * 0.6;
+            p.spawn(x, this.H - 20,
+              (Math.random() - 0.5) * 2, -(1 + Math.random() * 2 + energy * spd),
+              sz * (0.8 + Math.random()), 1.5 + Math.random() * 1.5,
+              mc, 'bouncing');
+            break;
+          }
+          case 'orbiting': {
+            const angle = Math.random() * Math.PI * 2;
+            const dist = 80 + Math.random() * 150;
+            p.spawn(cx + Math.cos(angle) * dist, cy + Math.sin(angle) * dist,
+              0, 0,
+              sz * (1 + Math.random() * 2), 2 + Math.random() * 3,
+              mc, 'orbiting');
+            p.angle = angle;
+            p.orbitR = dist;
+            break;
+          }
+        }
+      }
+    }
+
+    /* Beat → ripple + flash */
+    if (f.isBeat) {
+      const mp = this.classifier.params;
+      this.ripples.push({
+        x: cx, y: cy,
+        radius: 30, maxRadius: 200 + energy * 200,
+        alpha: mp.rippleIntensity + energy * 0.15,
+        color: { ...this.classifier.blendedColor }
+      });
+      /* Flash */
+      this.flashAlpha = mp.beatFlash;
+    }
+  }
+
+  updateParticles(dt) {
+    const energy = this.features ? clamp(this.features.rms * 5, 0, 1) : 0;
+    const beat = this.features ? this.features.isBeat : false;
+    for (let p of this.particles.pool) {
+      if (p.alive) p.update(dt, energy, beat);
+    }
+  }
+
+  updateRipples(dt) {
+    for (let i = this.ripples.length - 1; i >= 0; i--) {
+      const r = this.ripples[i];
+      r.radius += (r.maxRadius - r.radius) * 0.04;
+      r.alpha *= 0.97;
+      if (r.alpha < 0.005) this.ripples.splice(i, 1);
+    }
+  }
+
+  /* ======================================================
+     RENDER PIPELINE — 11 Layers
+     ====================================================== */
+  render(dt) {
+    const ctx = this.ctx;
+    const W = this.W, H = this.H;
+    const color = this.classifier.blendedColor;
+    const energy = this.features ? clamp(this.features.rms * 5, 0, 1) : 0;
+    const mp = this.classifier.params;
+
+    /* 1. Background color target */
+    this.targetBg = {
+      r: Math.round(color.r * 0.04 + 8),
+      g: Math.round(color.g * 0.04 + 8),
+      b: Math.round(color.b * 0.04 + 12)
+    };
+    this.bgColor.r = lerp(this.bgColor.r, this.targetBg.r, 0.03);
+    this.bgColor.g = lerp(this.bgColor.g, this.targetBg.g, 0.03);
+    this.bgColor.b = lerp(this.bgColor.b, this.targetBg.b, 0.03);
+
+    /* Clear screen with trail */
+    ctx.fillStyle = rgbStr(this.bgColor, mp.trail);
+    ctx.fillRect(0, 0, W, H);
+
+    /* 2. Background layer (bgPulse) */
+    this.drawBackground(ctx, color, energy, mp);
+
+    /* 3. Stars layer */
+    this.drawStars(ctx, color, energy, mp);
+
+    /* 4. Aurora layer (conditional) */
+    if (mp.aurora) this.drawAurora(ctx, color, energy, mp);
+
+    /* 5. Rays layer (conditional) */
+    if (mp.rayN > 0) this.drawRays(ctx, color, energy, mp);
+
+    /* 6. Geometry layer */
+    this.drawGeometries(ctx, color, energy, mp, dt);
+
+    /* 7. Spectrum layer */
+    if (this.analyzer.freqData) this.drawSpectrum(ctx, color, energy, mp);
+
+    /* 8. Particles layer */
+    this.particles.drawAll(ctx);
+
+    /* 9. Connections layer (conditional) */
+    if (mp.connDist > 0) this.drawConnections(ctx, color, mp);
+
+    /* 10. Ripples layer */
+    this.drawRipples(ctx);
+
+    /* 11. Waveform layer */
+    if (this.analyzer.timeData) this.drawWaveform(ctx, color, energy, mp);
+
+    /* 12. Flash layer */
+    this.drawFlash(ctx, color);
+
+    /* 13. Center glow */
+    this.drawCenterGlow(ctx, color, energy);
+  }
+
+  /* ---- Layer 2: Background with pulse ---- */
+  drawBackground(ctx, color, energy, mp) {
+    if (!mp.bgPulse) return;
+    const pulse = 0.03 + energy * 0.06 + Math.sin(this.time * 2) * 0.02;
+    const grad = ctx.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, Math.max(1, this.W * 0.5));
+    grad.addColorStop(0, rgbStr(color, pulse));
+    grad.addColorStop(1, rgbStr(color, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, this.W, this.H);
+  }
+
+  /* ---- Layer 3: Stars ---- */
+  drawStars(ctx, color, energy, mp) {
+    const W = this.W, H = this.H;
+    const brightBase = mp.starBrightBase;
+    const brightEnergy = mp.starBrightEnergy;
+
+    for (let s of this.stars) {
+      const bright = clamp(brightBase + energy * brightEnergy + Math.sin(this.time * s.speed + s.phase) * 0.15, 0, 1);
+      const x = s.x * W;
+      const y = s.y * H;
+      const r = 1 + bright * 1.5;
+
+      ctx.save();
+      ctx.globalAlpha = bright * 0.8;
+      const grad = ctx.createRadialGradient(x, y, 0, x, y, Math.max(0.5, r * 2));
+      grad.addColorStop(0, rgbStr({r: 255, g: 255, b: 255}, 0.9));
+      grad.addColorStop(0.3, rgbStr(color, 0.4));
+      grad.addColorStop(1, rgbStr(color, 0));
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(x, y, Math.max(0.5, r * 2), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /* ---- Layer 4: Aurora ---- */
+  drawAurora(ctx, color, energy, mp) {
+    const W = this.W, H = this.H;
+    const amp = 1 + energy * 2;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+
+    for (let band of this.auroraBands) {
+      const baseY = band.yOffset * H;
+      const points = [];
+
+      for (let x = 0; x <= W; x += 4) {
+        const wave1 = Math.sin(x * band.frequency + this.time * band.speed + band.phase) * band.amplitude * amp;
+        const wave2 = Math.sin(x * band.frequency * 1.5 + this.time * band.speed * 0.7 + band.phase * 2) * band.amplitude * 0.5 * amp;
+        const y = baseY + wave1 + wave2;
+        points.push({ x, y });
+      }
+
+      const grad = ctx.createLinearGradient(0, baseY - band.width, 0, baseY + band.width);
+      grad.addColorStop(0, rgbStr(color, 0));
+      grad.addColorStop(0.3, rgbStr(color, 0.04 + energy * 0.03));
+      grad.addColorStop(0.5, rgbStr(color, 0.08 + energy * 0.05));
+      grad.addColorStop(0.7, rgbStr(color, 0.04 + energy * 0.03));
+      grad.addColorStop(1, rgbStr(color, 0));
+
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.moveTo(0, baseY + band.width);
+      for (let pt of points) ctx.lineTo(pt.x, pt.y);
+      ctx.lineTo(W, baseY + band.width);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
+  /* ---- Layer 5: Rays ---- */
+  drawRays(ctx, color, energy, mp) {
+    const rayN = Math.round(mp.rayN);
+    if (rayN <= 0) return;
+    const rayL = mp.rayL * Math.min(this.W, this.H) * 0.5;
+    const cx = this.cx, cy = this.cy;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+
+    for (let i = 0; i < rayN; i++) {
+      const baseAngle = (i / rayN) * Math.PI * 2 + this.time * 0.1;
+      const len = rayL * (0.6 + energy * 0.4 + Math.sin(this.time * 2 + i) * 0.15);
+      const alpha = 0.04 + energy * 0.06;
+
+      const x2 = cx + Math.cos(baseAngle) * len;
+      const y2 = cy + Math.sin(baseAngle) * len;
+
+      const grad = ctx.createLinearGradient(cx, cy, x2, y2);
+      grad.addColorStop(0, rgbStr(color, alpha));
+      grad.addColorStop(0.6, rgbStr(color, alpha * 0.5));
+      grad.addColorStop(1, rgbStr(color, 0));
+
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 2 + energy * 3;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  /* ---- Layer 6: Geometry ---- */
+  drawGeometries(ctx, color, energy, mp, dt) {
+    const geoN = Math.round(mp.geoN);
+    if (geoN <= 0) return;
+    const cx = this.cx, cy = this.cy;
+    const baseR = Math.min(this.W, this.H) * 0.12;
+    this.geoRotation += dt * 0.3 * (1 + energy * 0.5);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+
+    for (let g = 0; g < geoN; g++) {
+      const r = baseR * (1.2 + g * 0.5) + energy * 20;
+      const rot = this.geoRotation + g * 0.5;
+      const alpha = 0.12 + energy * 0.15;
+
+      ctx.strokeStyle = rgbStr(color, alpha);
+      ctx.lineWidth = 1.5 + energy;
+
+      switch (mp.geo) {
+        case 'star':
+          this.drawStarShape(ctx, cx, cy, r, rot, 5 + g);
+          break;
+        case 'ring':
+          ctx.beginPath();
+          ctx.arc(cx, cy, Math.max(1, r), 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        case 'circles':
+          for (let c = 1; c <= 3 + g; c++) {
+            const cr = r * c * 0.25;
+            ctx.beginPath();
+            ctx.arc(cx, cy, Math.max(1, cr), 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          break;
+        case 'polygon': {
+          const sides = 5 + g;
+          ctx.beginPath();
+          for (let i = 0; i <= sides; i++) {
+            const angle = (i / sides) * Math.PI * 2 + rot;
+            const px = cx + Math.cos(angle) * r;
+            const py = cy + Math.sin(angle) * r;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+          break;
+        }
+        case 'spiral': {
+          ctx.beginPath();
+          for (let i = 0; i < 200; i++) {
+            const t = i / 200;
+            const angle = t * Math.PI * 6 + rot;
+            const sr = r * t;
+            const px = cx + Math.cos(angle) * sr;
+            const py = cy + Math.sin(angle) * sr;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+          break;
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  drawStarShape(ctx, cx, cy, r, rot, points) {
+    const outerR = r;
+    const innerR = r * 0.4;
+    ctx.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+      const angle = (i / (points * 2)) * Math.PI * 2 + rot - Math.PI / 2;
+      const rad = i % 2 === 0 ? outerR : innerR;
+      const px = cx + Math.cos(angle) * rad;
+      const py = cy + Math.sin(angle) * rad;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  /* ---- Layer 7: Spectrum (96 bars, inner mirror, top polygon) ---- */
+  drawSpectrum(ctx, color, energy, mp) {
+    const freq = this.analyzer.freqData;
+    const len = freq.length;
+    const cx = this.cx, cy = this.cy;
+    const baseR = Math.min(this.W, this.H) * 0.15;
+    const maxBarH = Math.min(this.W, this.H) * 0.2;
+    const barCount = 96;
+    const step = Math.max(1, Math.floor(len / barCount));
+    const specW = mp.specW;
+
+    ctx.save();
+
+    /* Inner glow */
+    const innerGlow = ctx.createRadialGradient(cx, cy, baseR * 0.5, cx, cy, baseR * 1.2);
+    innerGlow.addColorStop(0, rgbStr(color, 0.08 + energy * 0.06));
+    innerGlow.addColorStop(1, rgbStr(color, 0));
+    ctx.fillStyle = innerGlow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR * 1.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    /* Collect top points for polygon */
+    const topPoints = [];
+
+    for (let i = 0; i < barCount; i++) {
+      const val = freq[i * step] / 255;
+      const angle = (i / barCount) * Math.PI * 2 - Math.PI / 2;
+      const barH = val * maxBarH * (0.3 + energy * 0.7);
+      const x1 = cx + Math.cos(angle) * baseR;
+      const y1 = cy + Math.sin(angle) * baseR;
+      const x2 = cx + Math.cos(angle) * (baseR + barH);
+      const y2 = cy + Math.sin(angle) * (baseR + barH);
+
+      topPoints.push({ x: x2, y: y2 });
+
+      const barAlpha = 0.3 + val * 0.7;
+      const brightColor = {
+        r: clamp(color.r + val * 80, 0, 255),
+        g: clamp(color.g + val * 80, 0, 255),
+        b: clamp(color.b + val * 80, 0, 255)
+      };
+
+      /* Outer bars */
+      ctx.strokeStyle = rgbStr(brightColor, barAlpha);
+      ctx.lineWidth = Math.max(1, (Math.PI * 2 * baseR / barCount) * 0.6 * specW / 2.0);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      /* Inner mirror (shorter) */
+      const innerH = barH * 0.3;
+      const x3 = cx + Math.cos(angle) * (baseR - innerH);
+      const y3 = cy + Math.sin(angle) * (baseR - innerH);
+      ctx.strokeStyle = rgbStr(color, barAlpha * 0.4);
+      ctx.lineWidth = Math.max(1, (Math.PI * 2 * baseR / barCount) * 0.4 * specW / 2.0);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x3, y3);
+      ctx.stroke();
+    }
+
+    /* Top polygon connection line */
+    if (topPoints.length > 2 && energy > 0.05) {
+      ctx.strokeStyle = rgbStr(color, 0.15 + energy * 0.15);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(topPoints[0].x, topPoints[0].y);
+      for (let i = 1; i < topPoints.length; i++) {
+        ctx.lineTo(topPoints[i].x, topPoints[i].y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+
+    /* Outer circle */
+    ctx.strokeStyle = rgbStr(color, 0.12 + energy * 0.1);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /* ---- Layer 9: Connections ---- */
+  drawConnections(ctx, color, mp) {
+    const alive = this.particles.aliveParticles();
+    const maxDist = mp.connDist;
+    if (maxDist <= 0 || alive.length < 2) return;
+
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+
+    /* Limit checks for performance */
+    const maxCheck = Math.min(alive.length, 100);
+    for (let i = 0; i < maxCheck; i++) {
+      for (let j = i + 1; j < maxCheck; j++) {
+        const dx = alive[i].x - alive[j].x;
+        const dy = alive[i].y - alive[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < maxDist) {
+          const alpha = 1 - dist / maxDist;
+          ctx.strokeStyle = rgbStr(color, alpha * 0.3);
+          ctx.lineWidth = 0.5;
+          ctx.beginPath();
+          ctx.moveTo(alive[i].x, alive[i].y);
+          ctx.lineTo(alive[j].x, alive[j].y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    ctx.restore();
+  }
+
+  /* ---- Layer 10: Ripples ---- */
+  drawRipples(ctx) {
+    for (let r of this.ripples) {
+      ctx.save();
+      ctx.globalAlpha = r.alpha;
+      ctx.strokeStyle = rgbStr(r.color, 0.6);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, Math.max(1, r.radius), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /* ---- Layer 11: Waveform ---- */
+  drawWaveform(ctx, color, energy, mp) {
+    const time = this.analyzer.timeData;
+    const len = time.length;
+    const W = this.W, H = this.H;
+    const baseY = H - 80;
+    const waveH = mp.waveAmpBase + energy * mp.waveAmpEnergy;
+
+    ctx.save();
+    ctx.globalAlpha = 0.3 + energy * 0.2;
+
+    /* Fill area */
+    ctx.beginPath();
+    ctx.moveTo(0, baseY);
+    for (let i = 0; i < len; i += 2) {
+      const x = (i / len) * W;
+      const val = (time[i] / 128 - 1);
+      const y = baseY + val * waveH;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, baseY);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, baseY - waveH, 0, baseY + waveH);
+    grad.addColorStop(0, rgbStr(color, 0.15));
+    grad.addColorStop(0.5, rgbStr(color, 0.05));
+    grad.addColorStop(1, rgbStr(color, 0));
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    /* Line */
+    ctx.beginPath();
+    for (let i = 0; i < len; i += 2) {
+      const x = (i / len) * W;
+      const val = (time[i] / 128 - 1);
+      const y = baseY + val * waveH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = rgbStr(color, 0.5);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  /* ---- Layer 12: Flash ---- */
+  drawFlash(ctx, color) {
+    if (this.flashAlpha <= 0.005) return;
+    ctx.save();
+    const grad = ctx.createRadialGradient(this.cx, this.cy, 0, this.cx, this.cy, Math.max(1, this.W * 0.5));
+    grad.addColorStop(0, rgbStr(color, this.flashAlpha));
+    grad.addColorStop(0.5, rgbStr(color, this.flashAlpha * 0.3));
+    grad.addColorStop(1, rgbStr(color, 0));
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, this.W, this.H);
+    ctx.restore();
+    this.flashAlpha *= 0.88;
+  }
+
+  /* ---- Layer 13: Center Glow ---- */
+  drawCenterGlow(ctx, color, energy) {
+    const cx = this.cx, cy = this.cy;
+    const pulseR = 20 + energy * 40 + Math.sin(this.time * 2) * 5;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, pulseR));
+    grad.addColorStop(0, rgbStr(color, 0.25 + energy * 0.2));
+    grad.addColorStop(0.5, rgbStr(color, 0.05));
+    grad.addColorStop(1, rgbStr(color, 0));
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(1, pulseR), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  updateUI() {
+    /* Called externally */
+  }
+}
+
+/* ======================================================
+   UI Controller
+   ====================================================== */
+class UIController {
+  constructor(viz) {
+    this.viz = viz;
+    this.audio = document.getElementById('audio-player');
+    this.fileInput = document.getElementById('file-input');
+    this.uploadScreen = document.getElementById('upload-screen');
+    this.dropZone = document.getElementById('drop-zone');
+    this.moodPanel = document.getElementById('mood-panel');
+    this.controls = document.getElementById('controls');
+    this.topRightBtns = document.getElementById('top-right-btns');
+    this.moodLabel = document.getElementById('mood-label');
+    this.moodConfidence = document.getElementById('mood-confidence');
+    this.progressWrap = document.getElementById('progress-wrap');
+    this.progressFill = document.getElementById('progress-fill');
+    this.btnPlay = document.getElementById('btn-play');
+    this.playIcon = document.getElementById('play-icon');
+    this.btnPrev = document.getElementById('btn-prev');
+    this.volSlider = document.getElementById('volume-slider');
+    this.volIcon = document.getElementById('vol-icon');
+    this.songName = document.getElementById('song-name');
+    this.timeCurrent = document.getElementById('time-current');
+    this.timeTotal = document.getElementById('time-total');
+    this.toast = document.getElementById('toast');
+    this.micStartBtn = document.getElementById('mic-start-btn');
+    this.demoChopinBtn = document.getElementById('demo-chopin-btn');
+    this.micToggleBtn = document.getElementById('mic-toggle-btn');
+    this.langToggleBtn = document.getElementById('lang-toggle-btn');
+    this.uploadLangBtn = document.getElementById('upload-lang-btn');
+    this.uploadLangLabel = document.getElementById('upload-lang-label');
+    this.btnUploadNew = document.getElementById('btn-upload-new');
+
+    this.mode = 'idle'; /* idle, file, mic, midi */
+    this.micStream = null;
+    this.midiSynth = new MidiSynth();
+    this.uiUpdateTimer = 0;
+
+    /* AI状态面板元素 */
+    this.meydaDot = document.getElementById('meyda-dot');
+    this.knnDot = document.getElementById('knn-dot');
+    this.aiGateLabel = document.getElementById('ai-gate-label');
+
+    this.bindEvents();
+  }
+
+  bindEvents() {
+    /* Drag & drop */
+    this.dropZone.addEventListener('click', (e) => {
+      if (e.target === this.micStartBtn || e.target.closest('#mic-start-btn') ||
+          e.target === this.demoChopinBtn || e.target.closest('#demo-chopin-btn')) return;
+      this.fileInput.click();
+    });
+    this.dropZone.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.fileInput.click(); }
+    });
+    this.dropZone.addEventListener('dragover', (e) => { e.preventDefault(); this.dropZone.classList.add('drag-over'); });
+    this.dropZone.addEventListener('dragleave', () => this.dropZone.classList.remove('drag-over'));
+    this.dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      this.dropZone.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file && (file.type.startsWith('audio/') || file.name.match(/\.(mid|midi)$/i))) this.loadFile(file);
+      else this.showToast(t('uploadAudio'));
+    });
+    this.fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) this.loadFile(e.target.files[0]);
+    });
+
+    /* Mic */
+    this.micStartBtn.addEventListener('click', (e) => { e.stopPropagation(); this.startMic(); });
+    this.demoChopinBtn.addEventListener('click', (e) => { e.stopPropagation(); this.playChopinDemo(); });
+    this.micToggleBtn.addEventListener('click', () => {
+      if (this.mode === 'mic') this.stopMic();
+      else this.startMic();
+    });
+
+    /* Language toggle */
+    const toggleLang = () => {
+      currentLang = currentLang === 'en' ? 'zh' : 'en';
+      applyI18N();
+    };
+    this.langToggleBtn.addEventListener('click', toggleLang);
+    this.uploadLangBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleLang(); });
+
+    /* Playback */
+    this.btnPlay.addEventListener('click', () => this.togglePlay());
+    this.btnPrev.addEventListener('click', () => {
+      if (this.mode === 'midi') this.midiSynth.seekTo(0);
+      else this.audio.currentTime = 0;
+    });
+    this.volSlider.addEventListener('input', () => {
+      const v = this.volSlider.value / 100;
+      this.viz.analyzer.setVolume(v);
+      this.updateVolIcon(v);
+    });
+    this.progressWrap.addEventListener('click', (e) => {
+      if (this.mode === 'midi') {
+        const rect = this.progressWrap.getBoundingClientRect();
+        const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+        this.midiSynth.seekTo(ratio * this.midiSynth.getDuration());
+        return;
+      }
+      if (this.mode !== 'file') return;
+      const rect = this.progressWrap.getBoundingClientRect();
+      const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      this.audio.currentTime = ratio * this.audio.duration;
+    });
+
+    /* Upload new */
+    this.btnUploadNew.addEventListener('click', () => {
+      this.stopMic();
+      this.midiSynth.stop();
+      this.audio.pause();
+      this.fileInput.value = '';
+      this.fileInput.click();
+    });
+
+    /* Audio events */
+    this.audio.addEventListener('ended', () => {
+      this.playIcon.className = 'fas fa-play';
+    });
+    this.audio.addEventListener('loadedmetadata', () => {
+      this.timeTotal.textContent = formatTime(this.audio.duration);
+    });
+  }
+
+  loadFile(file) {
+    this.stopMic();
+    this.midiSynth.stop();
+    this.songName.textContent = file.name.replace(/\.[^.]+$/, '');
+
+    const isMidi = file.name.match(/\.(mid|midi)$/i);
+
+    this.uploadScreen.classList.add('hidden');
+    this.moodPanel.classList.add('visible');
+    this.controls.classList.add('visible');
+    this.topRightBtns.classList.add('visible');
+
+    if (isMidi) {
+      this.loadMidiFile(file);
+    } else {
+      this.loadAudioFile(file);
+    }
+  }
+
+  async loadMidiFile(file) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+
+      /* Initialize audio context for visualization */
+      if (!this.viz.analyzer.ctx) {
+        this.viz.analyzer.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+
+      /* Start the viz first */
+      if (!this.viz.running) this.viz.start();
+      if (this.viz.analyzer.ctx.state === 'suspended') await this.viz.analyzer.ctx.resume();
+
+      /* Play MIDI through Tone.js, get audio stream for analysis */
+      const stream = await this.midiSynth.playMidiFile(arrayBuffer, this.viz.analyzer);
+
+      /* Connect the MIDI audio stream to the analyzer */
+      if (stream) {
+        try {
+          const sourceNode = this.viz.analyzer.initFromStream(stream);
+          /* 初始化Meyda */
+          if (sourceNode && this.viz.analyzer.ctx) {
+            this.viz.featureExtractor.init(this.viz.analyzer.ctx, sourceNode);
+          }
+        } catch (e) {
+          console.warn('MIDI stream analysis setup failed, using fallback:', e);
+          this.setupMidiFallbackAnalyzer();
+        }
+      } else {
+        this.setupMidiFallbackAnalyzer();
+      }
+
+      this.mode = 'midi';
+      this.playIcon.className = 'fas fa-pause';
+      this.timeTotal.textContent = formatTime(this.midiSynth.getDuration());
+    } catch (e) {
+      console.error('MIDI load error:', e);
+      this.showToast('MIDI playback error');
+    }
+  }
+
+  setupMidiFallbackAnalyzer() {
+    /* Create a synthetic audio source that the analyzer can use for visualization */
+    if (!this.viz.analyzer.ctx) return;
+    const ctx = this.viz.analyzer.ctx;
+
+    /* Create an oscillator that's mostly silent but keeps the analyzer active */
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.001; /* Nearly silent */
+    osc.frequency.value = 440;
+    osc.connect(gain);
+
+    this.viz.analyzer.analyser = ctx.createAnalyser();
+    this.viz.analyzer.analyser.fftSize = 2048;
+    this.viz.analyzer.analyser.smoothingTimeConstant = 0.82;
+
+    gain.connect(this.viz.analyzer.analyser);
+    /* Don't connect to destination to avoid hearing the test tone */
+    osc.start();
+
+    this.viz.analyzer.freqData = new Uint8Array(this.viz.analyzer.analyser.frequencyBinCount);
+    this.viz.analyzer.timeData = new Uint8Array(this.viz.analyzer.analyser.frequencyBinCount);
+
+    /* Store reference for cleanup */
+    this._midiOsc = osc;
+    this._midiGain = gain;
+  }
+
+  loadAudioFile(file) {
+    const url = URL.createObjectURL(file);
+    this.audio.src = url;
+
+    if (!this.viz.analyzer.ctx) {
+      const sourceNode = this.viz.analyzer.initFromElement(this.audio);
+      /* 初始化Meyda声学特征提取器 */
+      if (sourceNode && this.viz.analyzer.ctx) {
+        this.viz.featureExtractor.init(this.viz.analyzer.ctx, sourceNode);
+      }
+    } else {
+      /* 已有ctx, 重新连接 */
+      try {
+        if (this.viz.analyzer.source) this.viz.analyzer.source.disconnect();
+        this.viz.analyzer.source = this.viz.analyzer.ctx.createMediaElementSource(this.audio);
+        this.viz.analyzer.source.connect(this.viz.analyzer.analyser);
+        this.viz.featureExtractor.init(this.viz.analyzer.ctx, this.viz.analyzer.source);
+      } catch(e) {
+        console.warn('Audio reconnection failed:', e);
+      }
+    }
+
+    this.mode = 'file';
+
+    this.audio.play().then(() => {
+      if (this.viz.analyzer.ctx.state === 'suspended') this.viz.analyzer.ctx.resume();
+      this.playIcon.className = 'fas fa-pause';
+      if (!this.viz.running) this.viz.start();
+    }).catch(() => {
+      this.showToast(t('clickPlay'));
+      if (!this.viz.running) this.viz.start();
+    });
+  }
+
+  async playChopinDemo() {
+    this.stopMic();
+    this.midiSynth.stop();
+    this.songName.textContent = 'Demo Music';
+
+    this.uploadScreen.classList.add('hidden');
+    this.moodPanel.classList.add('visible');
+    this.controls.classList.add('visible');
+    this.topRightBtns.classList.add('visible');
+
+    /* Generate MIDI data */
+    const midiData = generateChopinEtudeMidi();
+
+    /* Initialize audio context */
+    if (!this.viz.analyzer.ctx) {
+      this.viz.analyzer.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    if (!this.viz.running) this.viz.start();
+    if (this.viz.analyzer.ctx.state === 'suspended') await this.viz.analyzer.ctx.resume();
+
+    /* Set tempo */
+    Tone.Transport.bpm.value = 72;
+
+    /* Play the generated MIDI */
+    const stream = await this.midiSynth.playMidiFile(midiData.buffer, this.viz.analyzer);
+
+    if (stream) {
+      try {
+        const sourceNode = this.viz.analyzer.initFromStream(stream);
+        if (sourceNode && this.viz.analyzer.ctx) {
+          this.viz.featureExtractor.init(this.viz.analyzer.ctx, sourceNode);
+        }
+      } catch (e) {
+        this.setupMidiFallbackAnalyzer();
+      }
+    } else {
+      this.setupMidiFallbackAnalyzer();
+    }
+
+    this.mode = 'midi';
+    this.playIcon.className = 'fas fa-pause';
+    this.timeTotal.textContent = formatTime(this.midiSynth.getDuration());
+  }
+
+  async startMic() {
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.audio.pause();
+      this.playIcon.className = 'fas fa-play';
+
+      if (!this.viz.analyzer.ctx) {
+        this.viz.analyzer.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const micSource = this.viz.analyzer.initFromStream(this.micStream);
+      if (micSource && this.viz.analyzer.ctx) {
+        this.viz.featureExtractor.init(this.viz.analyzer.ctx, micSource);
+      }
+
+      this.mode = 'mic';
+      this.uploadScreen.classList.add('hidden');
+      this.moodPanel.classList.add('visible');
+      this.controls.classList.add('visible');
+      this.topRightBtns.classList.add('visible');
+      this.micToggleBtn.classList.add('active');
+      this.songName.textContent = t('micInput');
+      this.progressFill.style.width = '0%';
+      this.timeCurrent.textContent = '--:--';
+      this.timeTotal.textContent = '--:--';
+
+      if (!this.viz.running) this.viz.start();
+      if (this.viz.analyzer.ctx.state === 'suspended') this.viz.analyzer.ctx.resume();
+    } catch (e) {
+      this.showToast(t('micDenied'));
+    }
+  }
+
+  stopMic() {
+    if (this.micStream) {
+      this.micStream.getTracks().forEach(t => t.stop());
+      this.micStream = null;
+    }
+    this.micToggleBtn.classList.remove('active');
+    if (this.mode === 'mic') {
+      this.mode = 'idle';
+      try {
+        this.viz.analyzer.initFromElement(this.audio);
+      } catch(e) {}
+    }
+  }
+
+  togglePlay() {
+    if (this.mode === 'midi') {
+      if (this.midiSynth.isPlaying) {
+        Tone.Transport.pause();
+        this.midiSynth.isPlaying = false;
+        this.playIcon.className = 'fas fa-play';
+      } else {
+        Tone.Transport.start();
+        this.midiSynth.isPlaying = true;
+        this.playIcon.className = 'fas fa-pause';
+      }
+      return;
+    }
+    if (this.mode !== 'file') return;
+    if (this.audio.paused) {
+      this.audio.play();
+      this.playIcon.className = 'fas fa-pause';
+      if (this.viz.analyzer.ctx && this.viz.analyzer.ctx.state === 'suspended') this.viz.analyzer.ctx.resume();
+    } else {
+      this.audio.pause();
+      this.playIcon.className = 'fas fa-play';
+    }
+  }
+
+  updateVolIcon(v) {
+    if (v === 0) this.volIcon.className = 'fas fa-volume-xmark';
+    else if (v < 0.4) this.volIcon.className = 'fas fa-volume-low';
+    else this.volIcon.className = 'fas fa-volume-high';
+  }
+
+  /* Per-frame UI update (throttled) */
+  frameUpdate() {
+    this.uiUpdateTimer++;
+    if (this.uiUpdateTimer % 6 !== 0) return;
+
+    /* Progress */
+    if (this.mode === 'midi') {
+      const dur = this.midiSynth.getDuration();
+      const cur = this.midiSynth.getCurrentTime();
+      if (dur > 0) {
+        const pct = (cur / dur) * 100;
+        this.progressFill.style.width = pct + '%';
+        this.timeCurrent.textContent = formatTime(cur);
+      }
+      /* Check if MIDI ended */
+      if (cur >= dur && dur > 0) {
+        this.playIcon.className = 'fas fa-play';
+      }
+    } else if (this.mode === 'file' && this.audio.duration) {
+      const pct = (this.audio.currentTime / this.audio.duration) * 100;
+      this.progressFill.style.width = pct + '%';
+      this.timeCurrent.textContent = formatTime(this.audio.currentTime);
+    }
+
+    /* Mood panel */
+    const mr = this.viz.moodResult;
+    if (mr) {
+      const moodNames = t('moodNames');
+      this.moodLabel.textContent = moodNames[mr.dominant] || t('analyzing');
+      this.moodLabel.style.color = MOOD_COLORS[mr.dominant]?.primary || '#6B6880';
+      this.moodConfidence.textContent = mr.dominant === 'neutral'
+        ? t('detecting')
+        : `${t('confidence')} ${Math.round(mr.confidence * 100)}%`;
+
+      /* Mood bars */
+      const bars = document.querySelectorAll('.mood-bar-fill');
+      bars.forEach(bar => {
+        const mood = bar.dataset.mood;
+        const w = mr.weights[mood] || 0;
+        bar.style.width = (w * 100) + '%';
+        bar.style.background = MOOD_COLORS[mood]?.primary || '#6B6880';
+      });
+
+      /* Progress bar color */
+      this.progressFill.style.background = MOOD_COLORS[mr.dominant]?.primary || '#6B6880';
+    }
+
+    /* AI状态面板更新 */
+    this.updateAIStatus();
+  }
+
+  updateAIStatus() {
+    const fe = this.viz.featureExtractor;
+    const knn = this.viz.knnClassifier;
+    const classifier = this.viz.classifier;
+
+    /* Meyda状态 */
+    if (this.meydaDot) {
+      this.meydaDot.className = 'ai-dot ' + (
+        fe.status === 'active' ? 'active' :
+        fe.status === 'loading' ? 'loading' :
+        fe.status === 'error' ? '' : ''
+      );
+    }
+
+    /* KNN状态 */
+    if (this.knnDot) {
+      this.knnDot.className = 'ai-dot ' + (
+        knn.status === 'active' ? 'active' :
+        knn.status === 'ready' ? 'active' :
+        knn.status === 'uninitialized' ? 'loading' : ''
+      );
+    }
+
+    /* AI门控值 */
+    if (this.aiGateLabel) {
+      const gatePct = Math.round(classifier.aiGate * 100);
+      this.aiGateLabel.textContent = `AI: ${gatePct}%`;
+    }
+  }
+
+  showToast(msg) {
+    this.toast.textContent = msg;
+    this.toast.classList.add('show');
+    setTimeout(() => this.toast.classList.remove('show'), 2500);
+  }
+}
+
+/* ======================================================
+   Chopin Etude Op.10 No.3 MIDI Generator
+   Simplified arrangement of the main theme (E Major "Tristesse")
+   ====================================================== */
+function generateChopinEtudeMidi() {
+  /* Build a MIDI file binary from scratch */
+  /* Format 0, 1 track, 120 BPM */
+
+  const BPM = 72;
+  const TPQN = 480; /* ticks per quarter note */
+  const microPerTick = 60000000 / (BPM * TPQN);
+
+  /* Helper: MIDI variable length quantity */
+  function vlq(value) {
+    const bytes = [];
+    let v = value;
+    bytes.unshift(v & 0x7F);
+    v >>= 7;
+    while (v > 0) {
+      bytes.unshift((v & 0x7F) | 0x80);
+      v >>= 7;
+    }
+    return bytes;
+  }
+
+  /* Helper: note event (noteOn + noteOff) */
+  function noteEvent(delta, noteNum, duration, velocity = 80) {
+    const d1 = vlq(delta);
+    const dur = vlq(duration);
+    return [
+      ...d1, 0x90, noteNum, velocity,  /* note on */
+      ...dur, 0x80, noteNum, 0          /* note off */
+    ];
+  }
+
+  /* Note names to MIDI numbers */
+  function n(name) {
+    const map = { C:0,D:2,E:4,F:5,G:7,A:9,B:11 };
+    let i = 0;
+    const letter = name[i++];
+    let val = map[letter];
+    let sharp = false;
+    if (name[i] === '#') { sharp = true; i++; }
+    const octave = parseInt(name[i]);
+    return (octave + 1) * 12 + val + (sharp ? 1 : 0);
+  }
+
+  /* Main theme of Chopin Etude Op.10 No.3 "Tristesse" */
+  /* The melody with simplified left hand accompaniment */
+  const q = TPQN;      /* quarter note */
+  const h = q * 2;     /* half note */
+  const w = q * 4;     /* whole note */
+  const e = q / 2;     /* eighth note */
+  const s = q / 4;     /* sixteenth note */
+  const dq = q * 1.5;  /* dotted quarter */
+  const de = e * 1.5;  /* dotted eighth */
+
+  /* Build note events: [delta, midiNote, duration, velocity] */
+  /* Format: each entry is [delta_from_last_event, note, duration_ticks, velocity] */
+  const notes = [];
+
+  /* 4-bar intro / main theme phrase (simplified) */
+  /* Melody (right hand) - the famous "Tristesse" theme */
+  const melody = [
+    /* Bar 1: E F# G# B ... */
+    [0,    n('E5'),  e, 85],
+    [e,    n('F#5'), e, 80],
+    [e,    n('G#5'), e, 75],
+    [e,    n('B4'),  e, 80],
+
+    /* Bar 2 */
+    [e,    n('E5'),  e, 85],
+    [e,    n('E5'),  e, 75],
+    [e,    n('E5'),  e, 70],
+    [e,    n('E5'),  e, 70],
+
+    /* Bar 3: ascending */
+    [e,    n('E5'),  e, 80],
+    [e,    n('F#5'), e, 78],
+    [e,    n('G#5'), e, 76],
+    [e,    n('A5'),  e, 82],
+
+    /* Bar 4: descent */
+    [e,    n('G#5'), e, 78],
+    [e,    n('F#5'), e, 75],
+    [e,    n('E5'),  e, 80],
+    [e,    n('D#5'), e, 72],
+
+    /* Bar 5: second phrase */
+    [e,    n('E5'),  e, 85],
+    [e,    n('G5'),  e, 80],
+    [e,    n('F#5'), e, 78],
+    [e,    n('E5'),  e, 82],
+
+    /* Bar 6 */
+    [e,    n('D5'),  e, 78],
+    [e,    n('E5'),  e, 82],
+    [e,    n('C#5'), e, 75],
+    [e,    n('D5'),  e, 72],
+
+    /* Bar 7 */
+    [e,    n('E5'),  e, 80],
+    [e,    n('B4'),  e, 78],
+    [e,    n('C#5'), e, 75],
+    [e,    n('D5'),  e, 72],
+
+    /* Bar 8: resolution */
+    [e,    n('E5'),  q, 88],
+    [q,    n('G#4'), q, 70],
+    [q,    n('B4'),  q, 68],
+
+    /* Bar 9-12: more expressive middle section */
+    [q,    n('E5'),  e, 85],
+    [e,    n('F#5'), e, 82],
+    [e,    n('G#5'), e, 80],
+    [e,    n('A5'),  e, 85],
+    [e,    n('B5'),  e, 82],
+    [e,    n('A5'),  e, 78],
+    [e,    n('G#5'), e, 75],
+    [e,    n('F#5'), e, 80],
+
+    [e,    n('E5'),  e, 85],
+    [e,    n('E5'),  e, 78],
+    [e,    n('F#5'), e, 75],
+    [e,    n('G#5'), e, 82],
+    [e,    n('A5'),  e, 80],
+    [e,    n('G#5'), e, 78],
+    [e,    n('F#5'), e, 75],
+    [e,    n('E5'),  e, 82],
+
+    /* Bar 13-16: climactic phrase */
+    [e,    n('B5'),  e, 90],
+    [e,    n('A5'),  e, 85],
+    [e,    n('G#5'), e, 82],
+    [e,    n('F#5'), e, 80],
+    [e,    n('E5'),  e, 85],
+    [e,    n('F#5'), e, 82],
+    [e,    n('G#5'), e, 80],
+    [e,    n('A5'),  e, 78],
+
+    [e,    n('G#5'), e, 82],
+    [e,    n('F#5'), e, 78],
+    [e,    n('E5'),  q, 88],
+    [q,    n('D#5'), e, 75],
+    [e,    n('E5'),  e, 72],
+
+    /* Final resolution */
+    [e,    n('E5'),  h, 90],
+  ];
+
+  /* Left hand accompaniment (E major arpeggiated chords) */
+  const leftHand = [];
+  const lhStart = 0; /* starts with melody */
+  /* Simple broken chord patterns */
+  const lhPattern = [
+    /* Bar 1 */ [0, n('E3'), e, 55], [e, n('B3'), e, 50], [e, n('E4'), e, 48], [e, n('G#4'), e, 46],
+    /* Bar 2 */ [e, n('E3'), e, 55], [e, n('B3'), e, 50], [e, n('E4'), e, 48], [e, n('G#4'), e, 46],
+    /* Bar 3 */ [e, n('A2'), e, 55], [e, n('E3'), e, 50], [e, n('A3'), e, 48], [e, n('C#4'), e, 46],
+    /* Bar 4 */ [e, n('B2'), e, 55], [e, n('F#3'), e, 50], [e, n('B3'), e, 48], [e, n('D#4'), e, 46],
+    /* Bar 5 */ [e, n('E3'), e, 55], [e, n('G#3'), e, 50], [e, n('B3'), e, 48], [e, n('E4'), e, 46],
+    /* Bar 6 */ [e, n('A2'), e, 55], [e, n('C#3'), e, 50], [e, n('E3'), e, 48], [e, n('A3'), e, 46],
+    /* Bar 7 */ [e, n('A2'), e, 55], [e, n('E3'), e, 50], [e, n('A3'), e, 48], [e, n('C#4'), e, 46],
+    /* Bar 8 */ [e, n('E3'), e, 55], [e, n('G#3'), e, 50], [e, n('B3'), e, 48], [e, n('E4'), e, 46],
+    /* Bar 9 */ [e, n('E3'), e, 55], [e, n('B3'), e, 50], [e, n('E4'), e, 48], [e, n('G#4'), e, 46],
+    /* Bar 10 */ [e, n('C#3'), e, 55], [e, n('E3'), e, 50], [e, n('G#3'), e, 48], [e, n('C#4'), e, 46],
+    /* Bar 11 */ [e, n('A2'), e, 55], [e, n('E3'), e, 50], [e, n('A3'), e, 48], [e, n('C#4'), e, 46],
+    /* Bar 12 */ [e, n('B2'), e, 55], [e, n('F#3'), e, 50], [e, n('B3'), e, 48], [e, n('D#4'), e, 46],
+    /* Bar 13 */ [e, n('E3'), e, 55], [e, n('B3'), e, 50], [e, n('E4'), e, 48], [e, n('G#4'), e, 46],
+    /* Bar 14 */ [e, n('C#3'), e, 55], [e, n('E3'), e, 50], [e, n('G#3'), e, 48], [e, n('B3'), e, 46],
+    /* Bar 15 */ [e, n('A2'), e, 55], [e, n('E3'), e, 50], [e, n('A3'), e, 48], [e, n('C#4'), e, 46],
+    /* Bar 16 */ [e, n('E2'), e, 55], [e, n('B2'), e, 50], [e, n('E3'), e, 48], [e, n('G#3'), e, 46],
+    /* End */ [e, n('E2'), w, 60],
+  ];
+
+  /* Merge all note events, convert delta-times to absolute, sort, then back to delta */
+  const allEvents = [];
+
+  let absTime = 0;
+  for (const [delta, note, dur, vel] of melody) {
+    absTime += delta;
+    allEvents.push({ time: absTime, note, duration: dur, velocity: vel, type: 'on' });
+    allEvents.push({ time: absTime + dur, note, duration: 0, velocity: 0, type: 'off' });
+  }
+
+  absTime = 0;
+  for (const [delta, note, dur, vel] of leftHand) {
+    absTime += delta;
+    allEvents.push({ time: absTime, note, duration: dur, velocity: vel, type: 'on' });
+    allEvents.push({ time: absTime + dur, note, duration: 0, velocity: 0, type: 'off' });
+  }
+
+  /* Sort by time */
+  allEvents.sort((a, b) => a.time - b.time);
+
+  /* Convert to MIDI track bytes */
+  const trackBytes = [];
+  let prevTime = 0;
+
+  for (const ev of allEvents) {
+    const delta = ev.time - prevTime;
+    prevTime = ev.time;
+
+    const deltaVlq = vlq(delta);
+    if (ev.type === 'on') {
+      trackBytes.push(...deltaVlq, 0x90, ev.note, ev.velocity);
+    } else {
+      trackBytes.push(...deltaVlq, 0x80, ev.note, 0);
+    }
+  }
+
+  /* End of track */
+  trackBytes.push(...vlq(0), 0xFF, 0x2F, 0x00);
+
+  /* Build complete MIDI file */
+  const fileBytes = [];
+
+  /* Header chunk: MThd */
+  fileBytes.push(0x4D, 0x54, 0x68, 0x64); /* "MThd" */
+  fileBytes.push(0x00, 0x00, 0x00, 0x06); /* header length = 6 */
+  fileBytes.push(0x00, 0x00);              /* format 0 */
+  fileBytes.push(0x00, 0x01);              /* 1 track */
+  fileBytes.push((TPQN >> 8) & 0xFF, TPQN & 0xFF); /* ticks per quarter note */
+
+  /* Track chunk: MTrk */
+  const trackLen = trackBytes.length;
+  fileBytes.push(0x4D, 0x54, 0x72, 0x6B); /* "MTrk" */
+  fileBytes.push((trackLen >> 24) & 0xFF, (trackLen >> 16) & 0xFF,
+                 (trackLen >> 8) & 0xFF, trackLen & 0xFF);
+  fileBytes.push(...trackBytes);
+
+  /* Tempo meta event (insert at beginning of track) - actually we need to rebuild
+     Let's insert it properly: we'll prepend to the track */
+  /* Actually, let's just set tempo via Tone.Transport */
+
+  return new Uint8Array(fileBytes);
+}
+
+/* ======================================================
+   Initialize
+   ====================================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  applyI18N();
+
+  const canvas = document.getElementById('visualizer');
+  const viz = new Visualizer(canvas);
+  const ui = new UIController(viz);
+
+  console.log('[MusicVisualizer V2.0] AI Acoustic Fusion Engine initialized');
+  console.log('  - Meyda feature extractor:', viz.featureExtractor.status);
+  console.log('  - KNN classifier:', viz.knnClassifier.status, `(${viz.knnClassifier.priors.length} priors)`);
+
+  /* Inject UI frame update into render loop */
+  const origLoop = viz.loop.bind(viz);
+  viz.loop = function() {
+    if (!viz.running) return;
+    const now = performance.now();
+    const dt = Math.min((now - viz.lastTime) / 1000, 0.05);
+    viz.lastTime = now;
+    viz.time += dt;
+
+    viz.features = viz.analyzer.update();
+    if (viz.features) {
+      /* 双引擎管线: 规则基线 + KNN AI */
+      let knnWeights = null;
+      const features16d = viz.featureExtractor.getFeatures();
+      if (features16d) {
+        knnWeights = viz.knnClassifier.predict(features16d);
+      }
+      /* 计算AI门控值 */
+      if (knnWeights) {
+        viz.classifier.aiGate = viz.knnClassifier.computeAIGate(
+          knnWeights, viz.classifier.smoothed.rms
+        );
+      } else {
+        viz.classifier.aiGate = 0;
+      }
+      /* 定期输出AI融合调试日志 */
+      if (viz.classifier.aiGate > 0 && viz.knnClassifier.inferenceCount % 50 === 1) {
+        const dom = knnWeights ? Object.entries(knnWeights).sort((a,b) => b[1]-a[1])[0] : ['none',0];
+        console.log(`[AI Fusion] gate=${viz.classifier.aiGate.toFixed(3)}, KNN dominant=${dom[0]}(${dom[1]?.toFixed(2)}), Meyda=${viz.featureExtractor.status}`);
+      }
+      viz.moodResult = viz.classifier.classify(viz.features, knnWeights);
+    }
+    viz.classifier.updateColor();
+
+    viz.spawnParticles(dt);
+    viz.updateParticles(dt);
+    viz.updateRipples(dt);
+    viz.render(dt);
+    ui.frameUpdate();
+
+    requestAnimationFrame(() => viz.loop());
+  };
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "music-visualizer-v2",
+  "version": "2.0.0",
+  "description": "Emotion Spectrum V2 — AI Acoustic Fusion Music Visualizer with Meyda feature extraction + KNN instance learning + dual-engine dynamic fusion",
+  "private": true,
+  "scripts": {
+    "postinstall": "node -e \"const fs=require('fs'),p=require('path');const b='build';if(!fs.existsSync(b))fs.mkdirSync(b);fs.copyFileSync('index.html',p.join(b,'index.html'))\"",
+    "start": "npx serve ."
+  },
+  "devDependencies": {
+    "serve": "^14.2.0"
+  }
+}
