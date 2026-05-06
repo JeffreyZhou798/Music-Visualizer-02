@@ -1,6 +1,8 @@
-# Emotion Spectrum V2 — AI Acoustic Fusion Music Visualizer
+#  🎵 Emotion Spectrum V2 — AI Acoustic Fusion Music Visualizer
 
 Real-time music visualization with AI-powered mood detection, featuring **Meyda acoustic feature extraction**, **KNN instance learning**, and **dual-engine dynamic fusion** architecture.
+
+**👉Try it online**: [vercel](https://music-visualizer-02.vercel.app/) [maoziyun](https://musicvisualizer02-5svan014b.maozi.io/)
 
 ## Features
 
@@ -74,4 +76,23 @@ If all CDN sources fail, the visualizer gracefully falls back to rule-based mood
 
 ## License
 
-MIT
+MIT License - See [LICENSE](../LICENSE) for details.
+
+---
+
+
+
+## ⚠️ Copyright Notice
+
+© 2026 Jeffrey Zhou. All rights reserved.
+
+This repository and its contents are protected by copyright law.  
+No part of this project may be copied, reproduced, modified, or distributed without prior written permission from the author.
+
+Commercial use is strictly prohibited.
+
+
+*Built with ❤️ for music education*
+
+
+---
